@@ -149,3 +149,41 @@ kills any getty that does start. Untested at time of writing.
 
 **Confirmed by:** operator, hardware, 2026-08-26; follows `92480883` (`fix(autostart):
 document and scope the console-restore getty race`) on `cinemate` `dev`.
+
+## 2026-08-26 — RAW pane format-drive button: full destructive checklist passed
+
+**Tested:** the new `POST /settings-editor/api/raw/format` endpoint and its RAW-pane control,
+on `cinemate` branch `feature/raw-pane-format-drive` (`e54e691b`, off `dev` `953477e8`).
+Python-only change — delivered by `git pull --ff-only` plus a cinemate restart, no rebuild.
+The full destructive checklist, on a scratch drive: format as exFAT, ext4 and NTFS from the
+browser; a take recorded on the freshly formatted drive; a format attempted *while* recording;
+a CLI `set iso 800` issued during an in-flight format; the CLI `format exfat` path re-run as a
+regression check; and the interaction with `storage-automount.service` after the remount.
+
+**Worked:** all six checks. All three filesystems format and remount from the browser, and the
+pane re-renders the drive afterwards. A take records normally on the fresh drive and lists in
+the pane. Formatting while recording is refused with 409 and leaves the recording undisturbed.
+A concurrent CLI command reports `busy` during the format and dispatches normally again once it
+finishes — the accepted trade-off of routing through the shared dispatch lock, confirmed to
+*recover* rather than wedge. The CLI `format` path is unregressed. No mount fight with
+`storage-automount.service` was observed via the browser path.
+
+**Did not work:** nothing reported.
+
+**Why:** the one non-obvious mechanism here is why the endpoint cannot trust its own dispatch
+result, and that was established at the desk, not on hardware: `CommandExecutor._confirm_or_ok`
+reads back a value only for commands whose setter is in `parameters.REGISTRY`, and
+`format_drive` is not, so `handle_received_data("format <fs>")` returns `(True, "")` whether
+mkfs succeeded or not. The endpoint therefore verifies against observable state instead —
+which filesystem is mounted at the active root once `format_drive()` has remounted. The
+hardware run is consistent with that design but did not independently prove it; no failure path
+was exercised on the Pi, because nothing failed.
+
+**Not established:** which fstype string NTFS actually reported (the endpoint accepts `ntfs`,
+`ntfs3` and `fuseblk` precisely because this is driver-dependent) and how long a format held the
+dispatch lock in practice. Neither was reported, and a later reader should not infer them.
+
+**Confirmed by:** operator, 2026-08-26, reported as "worked flawlessly" against the six-item
+checklist in [`Tiramisioux/cinemate#152`](https://github.com/Tiramisioux/cinemate/pull/152). No
+`cinemate_dev.py` session artifact was captured — this entry rests on operator report alone,
+not on a traceable artifact.
