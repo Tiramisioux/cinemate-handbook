@@ -104,3 +104,48 @@ measurement, and was replaced with the real table before shipping.
 
 **Confirmed by:** operator-run session, `PI-RESULTS-2026-08-25.md`, PRs #135–#140 in the
 `cinemate` repo.
+
+## 2026-08-26 — F-283: removing `Conflicts=getty@tty1.service` is worse than the race it removes
+
+**Tested:** the fourth and last of the mitigations recorded in
+`cinemate-console-handoff.sh`'s comment — dropping `Conflicts=getty@tty1.service` from
+`cinemate-autostart.service` entirely — re-run and settled decisively on hardware, after the
+three timing-based attempts (`--job-mode=ignore-dependencies`, a deferred timer, a debounced
+timer) had each been defeated.
+
+**Worked:** the originally reported F-283 symptom stays fixed and is not in question. The
+`sudo -n` fix on the script's `systemctl start` calls holds across every run in this
+investigation, including the runs that failed for other reasons — `ExecStopPost` completes in
+well under a second, `TimeoutStopSec` is never reached, and the unit never lands `failed`.
+Restoring `Conflicts=` was also directly confirmed to do its intended job: getty@tty1 is
+auto-stopped when cinemate-autostart starts.
+
+**Did not work:** dropping `Conflicts=` broke a *fresh start*, not just a restart, which is
+strictly worse than the bug it was meant to remove. Reverted immediately; the unit file on
+`dev` is back to the original and that revert is the correct state.
+
+**Why:** `Conflicts=` was the only thing stopping a getty on tty1 before the unit started.
+Without it, a getty can still be alive on tty1 when cinemate-autostart starts, and the unit's
+own `TTYVHangup=yes` then hangs up every process on that tty as part of its own startup —
+including its own `ExecStartPre`. `camera-ready.sh` was observed killed by `SIGHUP`. The
+lesson generalises past this case: `TTYVHangup=yes` makes a unit's tty ownership a
+precondition of its own startup, so the exclusion that clears the tty cannot be removed
+without replacing it with something that clears the tty first.
+
+**Still open, unchanged:** the narrower race — an explicit `getty@tty1` start colliding with
+`Conflicts=` during an in-flight restart, leaving the unit `inactive` (never `failed`, never
+hung; a second restart recovers it). All four documented approaches rejected. A desk review on
+2026-08-26 against `origin/dev` added three things to it. First, **two** call sites issue that
+getty start, not one as `FINDINGS.md`'s F-283 entry records: `main.py`'s
+`restore_local_console_prompt()` (a getty `restart`, plus a 2.5s sleep, inside the stop path)
+and `cinemate-console-handoff.sh`'s own final line (a getty `start`) — so fixing only the
+documented one would not close it. Second, the race is now reachable from the web GUI, because
+B11.4 (`c29bcbf3`, on `dev`) rewired "Restart Cinemate" to issue a real
+`systemd-run … systemctl restart cinemate-autostart`; landing `inactive` on that path takes
+the GUI down with it, so recovery needs SSH. Third, all four rejected approaches change *when*
+the getty start happens or remove the exclusion, and none asks whether it should be issued at
+all — during the stop half of a restart it is not merely racy but pointless, since `Conflicts=`
+kills any getty that does start. Untested at time of writing.
+
+**Confirmed by:** operator, hardware, 2026-08-26; follows `92480883` (`fix(autostart):
+document and scope the console-restore getty race`) on `cinemate` `dev`.
