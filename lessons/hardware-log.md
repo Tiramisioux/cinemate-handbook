@@ -187,3 +187,54 @@ dispatch lock in practice. Neither was reported, and a later reader should not i
 checklist in [`Tiramisioux/cinemate#152`](https://github.com/Tiramisioux/cinemate/pull/152). No
 `cinemate_dev.py` session artifact was captured — this entry rests on operator report alone,
 not on a traceable artifact.
+
+## 2026-08-26 — RP1 overclock: the clock is 333 MHz, and no rp1 node exists to read it from
+
+**Tested:** the RP1 overclock and the pixel-rate chain on the dev CM5 (4 GB, kernel
+`6.12.93+rpt-rpi-2712`, imx477 on cam0), across cinemate `dev`, cinepi-raw `dev` and
+libcamera `cinemate` @ `3c7b9abd`.
+
+**Worked:** with the overlay enabled and the stack rebuilt, the chain reports consistently
+end to end — `clk_sys` 333333333 Hz, `config.txt` `rp1-overclock enabled`, and the running
+`cinepi-raw` carrying `--max-pixel-rate 580.0`. cinepi-raw accepting that option is itself
+proof it is the new build: boost program_options rejects an unrecognised option, so an old
+binary could not be running with it in its cmdline.
+
+**Did not work:** two assumptions behind the original auto-detecting implementation
+(libcamera `0413c1351`), both falsified on this board before it ever shipped:
+
+1. **There is no `rp1` node in `/proc/device-tree` at all** — not an empty one, none, and no
+   `assigned-clock-rates` property anywhere in the tree (`find /proc/device-tree -name
+   assigned-clock-rates` returns nothing). A device-tree walk for the RP1 clock can never
+   succeed here.
+2. **The overlay requests 300 MHz and the hardware delivers 333.33 MHz.** `pll_sys` and
+   `clk_sys` both read `333333333`; `pll_sys_pri_ph` reads `166666666`, consistent with a
+   third of the 1 GHz PLL core. Any lookup keyed on the requested `300000000` misses.
+
+Either failure alone made the probe return the stock rate on every boot, silently discarding
+an overclock the operator had enabled.
+
+**Why:** the clock driver synthesises the nearest rate it can from the 1 GHz `pll_sys_core`,
+and 1000/3 is 333.33 — the request is a target, not a promise. The missing device-tree node
+is not explained yet: RP1 is a PCIe device on Pi 5 and its clock description evidently does
+not surface under `/proc/device-tree` on this kernel. That mechanism is **unestablished** —
+recorded as an observation, not a diagnosis.
+
+**Not established, and a later reader should not infer it:**
+
+- **That libcamera is *applying* the value.** The new IPA is confirmed *installed*: `strings`
+  on the installed `ipa_rpi_pisp.so` finds `LIBCAMERA_RPI_MAX_PIXEL_RATE`, so all three layers
+  are running new code. But no *behaviour* has been observed. libcamera's `Info` line is
+  suppressed in normal operation (cinepi-raw calls `logSetTarget(LoggingTargetNone)` unless
+  `--verbose`, and always for `--list-cameras`), and on an *overclocked* board the old and new
+  builds are indistinguishable by design: the old one hardcoded 580, the new one is passed
+  580. The distinguishing test is toggling the overclock **off** — the new IPA should drop to
+  380. That test has not been run.
+- Whether the ceiling changes what `--list-cameras` advertises. Untested; this is gate G2 in
+  `dev-track/C5-link-frequency-regime/GATES.md`.
+- Any imx585 or imx283 behaviour. Neither sensor was attached; the imx283 `link-frequency`
+  overlay parameter (driver fork `257c9cf`) remains unbooted.
+
+**Confirmed by:** operator, 2026-08-26, pasting the three-line regime check after rebuilding
+the stack. Clock values independently read over SSH earlier the same session, in both regimes
+(200000000 before the overlay was enabled, 333333333 after). No `cinemate_dev.py` artifact.
