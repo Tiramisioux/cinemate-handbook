@@ -464,3 +464,38 @@ survives the stop — verified this session.
 before"); DNG parse and cross-frame pixel hashes performed off-device on
 `CINEPI_26-08-26_232134_F03_C00000_cam0` frames 2, 7, 8, 9. Analysis scripts were scratch
 only, not retained.
+
+## 2026-08-26 — `chip id mismatch: 477!=0` is an overlay/sensor mismatch, not a dead camera
+
+**Tested:** the 4 GB CM5 (`free -m` → 4049 MB), kernel `6.12.93+rpt-rpi-2712`, cinemate and
+cinepi-raw both clean on `dev` (`4affc53e` / `4a85042`). Found `cinemate-autostart` in
+`ActiveState=failed`, `Result=exit-code`, with neither `:5000` nor `:8000` listening — the
+camera stack fully down at session start.
+
+**Worked:** everything downstream of the camera. `storage-automount` active, `/media/RAW`
+mounted (477 GB NVMe, still NTFS from the previous session's format test), both repos clean.
+After the operator rebooted, the stack came up healthy on its own: unit `active`, both ports
+listening, imx585 streaming at 3856×2180 16-bit ClearHDR.
+
+**Did not work:** `camera-ready.sh` timed out at 30/30 attempts and exited 1, taking the unit
+down with it. `dmesg` showed `imx477 10-001a: chip id mismatch: 477!=0` followed by
+`probe with driver imx477 failed with error -5`.
+
+**Why:** `/boot/firmware/config.txt` had been changed to `dtoverlay=imx585,mono,cam0`, but the
+running kernel had booted the *previous* overlay and was still probing `imx477` — an imx477
+driver reading an imx585's chip-id register gets a mismatch. A sensor change in `config.txt`
+does not take effect until reboot, and until then the failure presents as a total camera
+failure several layers up. Two details worth remembering for a future desk diagnosis:
+
+- **The `!=0` side of the mismatch reads like "nothing on the bus"** — a loose or reversed
+  ribbon, or an unpowered sensor — which is the wrong first hypothesis. Compare the running
+  overlay in `dmesg` against `config.txt` *before* touching cables. `i2cdetect` on the camera
+  buses is not a useful tiebreaker here: it returned nothing on buses 4/6/10/11 in this state.
+- **The journal's timestamps can jump hours mid-boot** and did here: 09:51 → 22:12 between
+  "attempt 15" and "timeout after 30 attempts (30s)". That is NTP correcting a stale RTC, not
+  a 12-hour hang. The script counts attempts monotonically, so trust the attempt count over
+  the wall-clock delta.
+
+**Confirmed by:** operator ("rebooting now" / "with imx585" / "mono"), and the post-reboot
+state directly observed over SSH — `imx585 10-001a: Streaming started`, unit `active`, ports
+`:5000` and `:8000` listening.
