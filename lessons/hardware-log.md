@@ -302,3 +302,66 @@ frequency has been selected on any sensor.
 **Confirmed by:** operator, 2026-08-26, pasting the `--list-cameras` output and reporting "it
 works!". Arithmetic checked against the previously recorded 580 figures in
 `docs/overclocking.md`.
+
+## 2026-08-26 — imx585 mono "black image": a broken CSI cable, masked by a week of stack rebuilds
+
+**Tested:** imx585 mono on the dev CM5 (4 GB, kernel `6.12.93+rpt-rpi-2712`), cinemate `dev`
+@ `4affc53`, cinepi-raw `dev` @ `4a85042`, libcamera `cinemate` @ `3c7b9abd`, driver `6.12.y`
+@ `479117e`. Symptom: preview renders but shows nothing (black frame); resolution changes
+still work in the GUI. Full remote bisect over SSH, then a physical swap by the operator.
+
+**Worked (the bisect, in order — each step eliminated a layer):**
+
+1. `journalctl` showed the real failure: `Camera frontend has timed out!` +
+   `Dequeue timer of 1000000.00us has expired!` on `/dev/video4`, camera restart every ~2 s.
+   The "black image" is cinepi-raw displaying while receiving zero frames.
+2. RP1 overclock off (stock 200 MHz): identical failure → overclock exonerated.
+3. dpkg archaeology of Aug 24 19:52–20:45 (kernel 6.12.96 installed → downgraded to 6.12.93,
+   generic Debian 6.1 *headers* installed, imx585 module + dtbo rebuilt 20:45): all boot
+   artifacts verified coherent at 6.12.93; module vermagic matches → kernel churn exonerated.
+4. Raw kernel capture (`v4l2-ctl -d /dev/video4 --stream-mmap`) with cinemate stopped:
+   `select timeout`, zero frames → libcamera + cinepi-raw + all Aug-26 rebuilds exonerated.
+5. cam0_clk verified enabled at 24 MHz with the sensor as consumer; cam0_reg on; live DT node
+   correct (`clocks`, `assigned-clocks`, mono-mode) → clock/power/DT exonerated.
+6. CFE debugfs: `CSI2_CH_FE_FRAME_ID(0) = 0`, `MIPICFG_INTS = 0` → no lane activity at all
+   (dead link, not marginal).
+
+**Did not work:** the CSI FFC cable. I²C and the 24 MHz clock ran perfectly over it while the
+data pairs were dead — the driver logged `Streaming started` on every attempt and meant it.
+
+**Why:** I²C, INCK and the CSI-2 data pairs are separate conductors in the FFC; a cable can
+fail data-only. Every software layer then reports success because every software layer *is*
+succeeding. The one place the failure is visible is the receiver's frame counter and interrupt
+status, which nothing logs. The rig had been rewired (dual → single) between last-known-good
+(Aug 23/24 sixteen-item pass) and the failure; the Aug 24/26 kernel churn and rebuilds landed
+in the same window and looked guilty but were not.
+
+**Also observed, not yet closed (same session):**
+
+- The earlier "no rp1 node in /proc/device-tree" claim needs narrowing: the sensor lives at
+  `/proc/device-tree/axi/pcie@1000120000/rp1/i2c@88000/imx585@1a`, so an `rp1` node exists;
+  what is absent is an `assigned-clock-rates` array for `clk_sys` readable there.
+- cinemate `dev` now logs the regime (`RP1 regime: stock (clk_sys 200000000 Hz) -> 380
+  MPix/s`) and passes `--max-pixel-rate` accordingly — the C5 coupling works end to end.
+- ClearHDR halves each mode's advertised fps (1928×1090: 50 SDR → 25 HDR at stock clock;
+  3856×2180: 43.8 → ~21.9). With user fps 25 at stock clock, dynamic resolution
+  **silently swaps a selected 3856 HDR mode for the 1928 sibling** (`set resolution 3` →
+  `sensor_mode 4`) — this presents to the operator as "4K modes are not loading". At 580
+  (overclock on) 3856 HDR ≈ 33.4 fps and the swap does not trigger. The silent swap is a UX
+  defect worth filing.
+- 3856×2180 12-bit SDR loads correctly through the same-aspect live-reconfigure path
+  (verified at the subdev: `3856x2180 Y12_1X12`), no relaunch, no timeouts.
+- 12-bit ClearHDR renders black and 16-bit ClearHDR renders fine vertical stripes with
+  `hdr_data_selection_threshold = {0,0}` — zeros live in Redis
+  (`hdr_threshold_low/high = 0`) and cinepi-raw's launch-restore writes them over any driver
+  default, so the driver-side INNO-MAKER defaults fix (`cb7c7a6`, local, unpushed) cannot
+  take effect alone; the Redis state must be corrected too. Live-threshold fix attempted via
+  `set hdr threshold low 4095` / `high 0` — **result not yet confirmed by the operator**.
+- cinepi-raw's threshold-restore guard is `||` where the pair semantics demand both keys
+  (`cinepi_controller.cpp` sync()): one key set + one empty writes a half-default pair.
+  Separately, cinepi-raw maps `pair[0]=low, pair[1]=high` while the driver documents the
+  array as `{TH_H, TH_L}` — a naming/order swap to reconcile before touching this code.
+
+**Confirmed by:** operator, 2026-08-26 ("it works! it was the cable") after swapping the FFC;
+all bisect steps observed directly over SSH in the same session. No `cinemate_dev.py`
+artifact — diagnosis ran as ad-hoc SSH probes.
