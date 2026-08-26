@@ -238,3 +238,67 @@ recorded as an observation, not a diagnosis.
 **Confirmed by:** operator, 2026-08-26, pasting the three-line regime check after rebuilding
 the stack. Clock values independently read over SSH earlier the same session, in both regimes
 (200000000 before the overlay was enabled, 333333333 after). No `cinemate_dev.py` artifact.
+
+## 2026-08-26 — the pixel-rate ceiling does reach `--list-cameras`, and libcamera honours it
+
+Completes the entry above, which left two things unestablished. Both are now settled.
+
+**Tested:** imx585 mono on the dev CM5 with the RP1 overclock **enabled** (`clk_sys`
+333333333 Hz), running `cinepi-raw --list-cameras` bare — no `--max-pixel-rate`, so libcamera
+fell back to its own default of 380 MPix/s.
+
+**Worked:**
+
+```
+0 : imx585 [3840x2160 MONO]
+    Modes: 'R12_CSI2P' : 1928x1090 [75.00 fps - (0, 0)/3840x2160 crop]
+                         3856x2180 [43.80 fps - (0, 0)/3840x2160 crop]
+```
+
+Against the same modes recorded when libcamera was hardcoded at 580 MPix/s (75.00 and 66.85):
+
+| Mode | at 580 | at 380 | ratio |
+|---|---|---|---|
+| 1928x1090 | 75.00 | 75.00 | 1.00000 |
+| 3856x2180 | 66.85 | 43.80 | 0.65520 |
+
+`380/580 = 0.65517`. The wide mode scales with the ceiling to five decimal places —
+`66.85 × 380/580 = 43.80`, exactly the observed figure.
+
+**Two conclusions, both previously open:**
+
+1. **libcamera is applying the value, not merely carrying it.** The install was confirmed by
+   `strings` earlier; this is the behaviour. A build that ignored
+   `LIBCAMERA_RPI_MAX_PIXEL_RATE` could not have produced 43.80 — that number only exists if
+   the 380 default was actually used.
+2. **The ceiling reaches mode enumeration.** `--list-cameras` output changes with it. This
+   answers gate G2 **yes**, and it removes the reason for the cinemate-side fps clamping
+   planned as C5.2–C5.4: libcamera already produces an honest mode table once it is given the
+   right ceiling, so there is nothing left for Cinemate to correct.
+
+**Why:** the bound constrains *line time*, not frame throughput — the IPA stretches each
+mode's minimum line length to `width ÷ rate`. So it binds only where the sensor's own readout
+is faster than the receiver can drain:
+
+| Mode | actual line time | needed at 380 | verdict |
+|---|---|---|---|
+| 1928x1090 | 12.23 µs | 5.07 µs | sensor-limited, unaffected |
+| 3856x2180 | 10.47 µs | 10.15 µs | **bound-limited**, sitting right on the limit |
+
+That is also why the imx477 cannot exercise this feature at all: checked across all fifteen
+of its modes, the tightest uses 56% of the budget at 380, so no imx477 mode is ever
+bound-limited and its `--list-cameras` output is identical at any ceiling. An imx477 board
+gains nothing from the RP1 overclock — not a fault, just no bottleneck to relieve.
+
+The 43.8 fps figure independently reproduces the number in will127534's driver README
+("without overclocking RP1 you will be limited to ~43.8 FPS @ 4K"), from a different
+direction: his came from measurement, this one falls out of the line-time arithmetic.
+
+**Not established:** that a take at 66.85 fps actually records cleanly at 580 on this board —
+only the *advertised* ceiling has been observed, not sustained capture. The imx283
+`link-frequency` overlay parameter (`257c9cf`) is still unbooted, and no non-default link
+frequency has been selected on any sensor.
+
+**Confirmed by:** operator, 2026-08-26, pasting the `--list-cameras` output and reporting "it
+works!". Arithmetic checked against the previously recorded 580 figures in
+`docs/overclocking.md`.
