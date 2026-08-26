@@ -365,3 +365,72 @@ in the same window and looked guilty but were not.
 **Confirmed by:** operator, 2026-08-26 ("it works! it was the cable") after swapping the FFC;
 all bisect steps observed directly over SSH in the same session. No `cinemate_dev.py`
 artifact — diagnosis ran as ad-hoc SSH probes.
+
+## 2026-08-26 — 16-bit ClearHDR records a constant fill pattern, not camera data
+
+Continues the entry above (same session, after the cable was replaced and the link was
+healthy). Refines two items that entry left open; does not contradict it.
+
+**Tested:** imx585 **mono** on the dev CM5, RP1 overclock **enabled** (`clk_sys` 333333333),
+cinemate `dev` @ `4affc53`, cinepi-raw `dev` @ `4a85042`, libcamera `cinemate` @ `3c7b9abd`,
+driver `6.12.y` @ `479117e`. Six frames recorded in 3856×2180 16-bit ClearHDR, pulled and
+parsed off-device.
+
+**Worked:**
+
+- **The overclock fixes the "4K modes won't load" complaint.** At stock clock 3856×2180
+  advertises 43.80 fps SDR / ~21.9 HDR, so a user fps of 25 made dynamic resolution silently
+  substitute the 1928 sibling. With the overlay active every mode advertises 25.00 fps
+  (`RP1 regime: overclocked (clk_sys 333333333 Hz) -> 580 MPix/s`) and the swap stops.
+- **Thresholds persist correctly.** `set hdr threshold low 4095` / `high 0` reach the sensor
+  live (`hdr_data_selection_threshold: 4095, 0`) **and survive reboot** — they are stored in
+  Redis and the launch-restore reads from Redis. The earlier assumption that a restart would
+  re-stomp them to `{0,0}` was **wrong**; correcting it here.
+- The sensor streams normally in ClearHDR: `wide_dynamic_range value=1`, VBLANK/VMAX updated
+  every frame, no `Camera frontend has timed out`, no restart loop.
+
+**Did not work — 16-bit ClearHDR carries no image data at all:**
+
+Parsed from the DNG's own `StripOffsets` (offset 8, `Compression=1` uncompressed,
+`3856x2180`, `BitsPerSample=16`, stride exactly `w*2` — no assumed geometry):
+
+| Measure | Value |
+|---|---|
+| unique pixel values in frame | **6** — `128, 3200, 8204, 12300, 32780, 51212` |
+| first row | `[12300, 128, 8204, 3200, 128, 51212, 128, 32780]` repeating every 8 px |
+| mean abs vertical neighbour diff | **0.0** — every row byte-identical |
+| pixel-block md5, frames 7/8/9 | **identical** (only DNG metadata differs) |
+
+A 16-byte pattern replicated across all 16.8 MB, identical in every frame. Real sensor data
+always carries per-pixel and per-frame noise, so this is a synthetic fill, not a dark frame,
+not an exposure fault, and not a byte-swap (a swap of real data would still vary row to row
+and frame to frame).
+
+This also explains the operator's "finer stripes at 4K": the period is fixed in *sensor*
+pixels, so a 3856-wide frame downscaled into the same 1272-wide preview shows the same 8-px
+pattern at roughly half the apparent pitch. 12-bit ClearHDR renders black on the same rig —
+probably the same root cause with a different fill, not established.
+
+**Why:** **not established.** What is ruled out: the CSI link (SDR is clean on the same
+cable), frame delivery (no timeouts, VBLANK moving), the data-selection thresholds (correct
+`4095,0` on the sensor during the failing capture), and the `Needs16bitEndianSwap` path as a
+*sufficient* explanation. Note the swap **is** armed here — the configure line reads
+`Selected sensor format: 3856x2180-Y16_1X16 - Selected CFE format: 3856x2180-Y16`, so the
+CFE output is plain `Y16`, not PISP1/COMP1-packed, and `bcdd7e17b`'s guard
+(`packing != PISP1`) therefore does not suppress it. Whether the swap is *also* wrong here is
+untested and now secondary: swapping cannot turn varying data into a constant.
+
+**Also observed:** `set hdr gain adder 2` returns `ok` but the control still reads
+`hdr_gain_adder_db value=1 (+6dB)` against `default=2` — the write does not reach the driver.
+Separate defect from the thresholds, which do reach it. `analogue_gain` sits pinned at its
+maximum (80).
+
+**Next check that would settle the mechanism:** capture the same scene straight off
+`/dev/video4` with `v4l2-ctl --stream-mmap` in the 16-bit mode with cinemate stopped. That
+path bypasses libcamera entirely, so real data there localises the fault to
+libcamera/PiSP-BE; the same fill pattern there localises it to the CFE/driver.
+
+**Confirmed by:** operator report ("4K 16b looks like stripes but finer stripes than
+before"); DNG parse and cross-frame pixel hashes performed off-device on
+`CINEPI_26-08-26_232134_F03_C00000_cam0` frames 2, 7, 8, 9. Analysis scripts were scratch
+only, not retained.
