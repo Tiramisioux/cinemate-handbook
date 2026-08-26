@@ -499,3 +499,67 @@ failure several layers up. Two details worth remembering for a future desk diagn
 **Confirmed by:** operator ("rebooting now" / "with imx585" / "mono"), and the post-reboot
 state directly observed over SSH — `imx585 10-001a: Streaming started`, unit `active`, ports
 `:5000` and `:8000` listening.
+
+## 2026-08-26 — the imx585 HMAX/hdr_scale bug is real, and is NOT the cause of the ClearHDR fill pattern
+
+A **falsification**, recorded because the hypothesis was well-evidenced enough that a future
+session would otherwise re-derive and re-test it. Continues the "16-bit ClearHDR records a
+constant fill pattern" entry above.
+
+**Tested:** imx585 mono, dev CM5, overclock on. `imx585_update_hmax()` in the driver computes
+`hdr_scale = clear_hdr ? 2 : 1` and applies it to **VMAX only** — the HMAX line reads
+`u32 h = factor / supported_modes[i].hmax_div;` with no `hdr_scale` factor, inside a function
+named `update_hmax`. dmesg confirmed the asymmetry directly:
+
+```
+Update minimum HMAX: base=660 lane_scale=1 hdr_scale=2
+ mode 3856x2180 -> VMAX=4500 HMAX=660        <- VMAX scaled, HMAX not
+```
+
+Hypothesis: ClearHDR reads out high- and low-gain data per line, so the line period must
+double; at HMAX=660 instead of 1320 the sensor cannot emit a valid line. Patched line 695 to
+`factor * hdr_scale / hmax_div`, rebuilt via DKMS (`./setup.sh`), rebooted.
+
+**Worked:** the patch does exactly what it claims. Post-reboot dmesg:
+`mode 3856x2180 -> VMAX=4500 HMAX=1320`.
+
+**Did not work — the hypothesis is FALSIFIED.** Recorded 6 frames of 16-bit ClearHDR and
+hashed the pixel block (`tail -c +9 | head -c 16812160 | md5sum`):
+
+| | pixel-block md5 |
+|---|---|
+| before patch (HMAX 660) | `31603865fe3aa83d793e50cce4fe201c` |
+| after patch (HMAX 1320) | `31603865fe3aa83d793e50cce4fe201c` |
+
+**Byte-for-byte identical.** Doubling the line period changed not one bit of output. Operator
+independently reported "visually it is the same as before".
+
+**Why this matters more than the fix would have:** the captured constant is now known to be
+invariant across HMAX 660 vs 1320, across frames, across reboots, and across a driver
+rebuild. Sensor line timing is therefore *irrelevant* to it. This is not sensor data being
+mangled in transit — it is a buffer the capture path never writes, carrying a deterministic
+fill. Any future theory must explain invariance under sensor reconfiguration.
+
+**Also ruled out this round:** `do16BitEndianSwap()` (pisp.cpp:373) as the *source*. Its NEON
+loop is correct — `ld1`/`rev16`/`st1` with `count = (width+7)/8` covers exactly `width*2`
+bytes per row (482 iterations x 16 B = 7712 B at width 3856), stride-indexed per row. It is
+armed for this mode (Y16 maps to `Packing::None`, so `bcdd7e17b`'s `!= PISP1` guard passes),
+but an in-place byte swap of a constant yields another constant; it cannot create one.
+
+**Should the HMAX patch be kept?** Probably not as-is. It is a genuine upstream defect
+(`git log -L` traces the unscaled line to will127534's `0fe7af2`, so it has never been
+correct), but it buys nothing observable here and it **halves the maximum ClearHDR frame
+rate** — immediately after the rebuild, dynamic resolution swapped a requested 3856 HDR mode
+down to 1928 because 4K HDR could no longer sustain 25 fps. Revert with
+`git checkout imx585.c && ./setup.sh` unless a separate test shows it matters. Fix it upstream
+on its own merits, not as a fix for this.
+
+**Next hypothesis to test (cheapest first):** force the 16-bit ClearHDR mode down the COMP1
+CFE path instead of plain Y16, by changing imx585's 16-bit `packing` from `U` to `P` in
+`resources/sensors.json`. `pisp.cpp` `platformValidate` leaves a 16-bit + `Packing::None`
+request untouched (plain uncompressed Y16, 2 B/px), while a CSI2/`P` request becomes
+PISP1/COMP1 (`PC1M` for mono, 1 B/px) — an entirely different CFE output format. If COMP1
+produces real data, the fault is localised to the uncompressed Y16 CFE path.
+
+**Confirmed by:** operator applied the patch and rebuilt; dmesg HMAX value and both pixel-block
+hashes observed directly over SSH, 2026-08-26.
