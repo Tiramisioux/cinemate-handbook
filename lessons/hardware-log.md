@@ -425,10 +425,40 @@ untested and now secondary: swapping cannot turn varying data into a constant.
 Separate defect from the thresholds, which do reach it. `analogue_gain` sits pinned at its
 maximum (80).
 
-**Next check that would settle the mechanism:** capture the same scene straight off
-`/dev/video4` with `v4l2-ctl --stream-mmap` in the 16-bit mode with cinemate stopped. That
-path bypasses libcamera entirely, so real data there localises the fault to
-libcamera/PiSP-BE; the same fill pattern there localises it to the CFE/driver.
+**Next check that would settle the mechanism** — and a correction to how to run it.
+
+`/dev/video4` is **`rp1-cfe-fe_image0`**, the PiSP *front-end* output. It cannot stream
+unless the FE has been configured with a parameter buffer queued on `/dev/video7`
+(`rp1-cfe-fe_config`), which only libcamera does. So `v4l2-ctl -d /dev/video4
+--stream-mmap` returns `select timeout` **whether or not the sensor is healthy** — it is not
+a libcamera bypass and proves nothing on its own. Confirmed this session: with a
+known-good cable and SDR working, video4 still timed out and wrote 0 bytes.
+
+**This retroactively invalidates one inference in the cable entry above.** That entry cites a
+`v4l2-ctl -d /dev/video4` timeout as evidence that "libcamera + cinepi-raw + all Aug-26
+rebuilds" were exonerated. That test could not have shown anything else. The cable conclusion
+still stands on the *other* two legs — `MIPICFG_INTS = 0` and `CSI2_CH_FE_FRAME_ID(0) = 0`
+(no lane activity at the receiver), plus the operator's confirmed fix by physical swap — but
+the raw-capture leg should be struck.
+
+The genuine bypass is **`/dev/video0` (`rp1-cfe-csi2_ch0`)**, the direct CSI-2 channel, which
+skips the PiSP FE. It requires re-routing the media graph first, because `csi2:4` is linked
+to `pisp-fe` by default (media device is `/dev/media2` on this build):
+
+```
+sudo systemctl stop cinemate-autostart
+media-ctl -d /dev/media2 -l '"csi2":4->"pisp-fe":0[0]'
+media-ctl -d /dev/media2 -l '"csi2":4->"rp1-cfe-csi2_ch0":0[1]'
+media-ctl -d /dev/media2 -V '"csi2":4 [fmt:Y16_1X16/3856x2180]'
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=3856,height=2180,pixelformat='Y16 '
+v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=3 --stream-to=/tmp/raw0.bin
+sudo systemctl start cinemate-autostart   # libcamera restores the links on configure
+```
+
+Real varying data in `/tmp/raw0.bin` localises the fault to libcamera/PiSP-BE; the same
+constant fill localises it to the CFE or the sensor driver. Note the sensor keeps
+`wide_dynamic_range=1` and the Y16 subdev format after cinemate exits, so the ClearHDR mode
+survives the stop — verified this session.
 
 **Confirmed by:** operator report ("4K 16b looks like stripes but finer stripes than
 before"); DNG parse and cross-frame pixel hashes performed off-device on
