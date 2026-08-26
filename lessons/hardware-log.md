@@ -563,3 +563,72 @@ produces real data, the fault is localised to the uncompressed Y16 CFE path.
 
 **Confirmed by:** operator applied the patch and rebuilt; dmesg HMAX value and both pixel-block
 hashes observed directly over SSH, 2026-08-26.
+
+## 2026-08-26 — the boundary is not ClearHDR: only the base HD SDR mode returns real data
+
+**Supersedes the framing of the two entries above.** Those investigated "16-bit ClearHDR
+records a fill pattern" as if ClearHDR were the variable. It is not. A resolution-matched
+control set shows the failure is broader and the working set is much smaller than assumed.
+
+**Tested:** imx585 mono, dev CM5, **no lens fitted** (bare sensor in room light — relevant,
+see below). RP1 overclock on. Link frequency set to the over-spec 1039.5 MHz / 2079 Mbps
+option. imx585 driver carrying the local HMAX `hdr_scale` patch. Six frames recorded per mode
+via `rec f 6`, DNGs pulled and unpacked off-device (MIPI RAW12 for the 12-bit modes).
+
+**Results:**
+
+| Mode | unique values | mean\|dx\| | mean\|dy\| | verdict |
+|---|---|---|---|---|
+| **1928x1090 12b SDR** | **592** | 1156 | 780 | **real image** (mean 1823, pct 1/50/99 = 90/1511/3934) |
+| 3856x2180 12b SDR | 1 | 0.00 | 0.00 | uniform 4095 fill |
+| 3856x2180 12b ClearHDR | 3-4 | 184 | 0.5 | fill (values 0/12/192/200) |
+| 1928x1090 & 3856x2180 16b ClearHDR | 6 | 22953 | 0.0 | fill (16-byte repeat) |
+
+**Only 1928x1090 12-bit SDR — the smallest payload of any available mode — produces real
+sensor data.** Every larger mode returns a fill pattern.
+
+**Why saturation is ruled out for 4K SDR** (this is the load-bearing argument, and it needs
+the no-lens detail): with no lens the bare sensor is flooded, so "everything clips to 4095"
+is a plausible innocent explanation. It does not survive. 1928x1090 is the **2x2 binned**
+mode — it collects roughly 4x the light per output pixel and should therefore clip *before*
+the unbinned 4K mode. Observed is the exact inverse: the binned mode shows a normal histogram
+while the unbinned mode is pinned at exactly 4095 with **zero** variance, unchanged across a
+~5-stop exposure reduction (ISO 3200 -> 100, `analogue_gain` 80 -> 0, `exposure` 751). A real
+saturated frame still varies at hot/dead pixels and edges. 4K SDR is a fill, not a clip.
+
+**What this falsifies, beyond the HMAX patch already retracted above:**
+
+- **HMAX / `hdr_scale`** — ClearHDR-only by construction, but 4K **SDR** fails identically
+  with `hdr_scale = 1`. Doubly dead.
+- **`do16BitEndianSwap`** — armed only for 16-bit; 4K 12-bit SDR fails too.
+- **CCMP ratios, data-selection thresholds, `hdr_gain_adder`** — all ClearHDR-only, all
+  cannot explain 4K SDR.
+- Operator report "nothing happens in ClearHDR when I change ISO" is consistent and expected:
+  a buffer holding no sensor data cannot respond to any sensor control.
+
+**Why:** **not established.** The surviving shape is bandwidth/throughput: the one working
+mode is the smallest payload, and every failure is either 4x the pixels (4K) or ~2x the
+readout (ClearHDR) or both. That points back at the PiSP pixel-rate ceiling — and at the
+subagent's observation that the bound is specified in **pixels**/s while the CSI2-to-ISP-FE
+FIFO is a **byte** pipe, so a bound that is safe at 12 bpp is over-stated by 1.33x at 16 bpp.
+Not proven; no test has yet varied bandwidth alone.
+
+**Next test that would settle it:** drop `--max-pixel-rate` far below the current value
+(e.g. 200) and re-shoot **4K 12-bit SDR**. Real data at a lower ceiling confirms a throughput
+ceiling and localises it; unchanged fill refutes the bandwidth family outright and moves the
+search to buffer allocation / DMA target. Do this from a clean baseline: revert the HMAX
+patch (`git checkout imx585.c && ./setup.sh`) and return the link frequency to the in-spec
+720 MHz first, so over-spec settings are not stacked on the measurement.
+
+**Method note for future sessions:** the discriminator that made this tractable is cheap and
+general — unpack the DNG and report unique-value count plus mean absolute row-to-row
+difference. Real sensor data has hundreds of levels and non-zero vertical variation; every
+failure mode here had <10 levels and ~0 vertical variation. It distinguishes "no data" from
+"wrong data" from "clipped data" without needing a reference frame or a known scene. Beware
+the naive inverse: a *legitimately* uniform frame (true clipping) also shows one level, which
+is why the binning argument above, not the level count, is what settles 4K SDR.
+
+**Confirmed by:** operator ("only HD SDR looks good" — the original report, which this
+finally corroborates; "nothing happens in ClearHDR when i change iso"; "i have the sensor
+without a lens"). All frames recorded and analysed over SSH, 2026-08-26, takes
+`CINEPI_26-08-26_235123/235316/235620/235712/235808_*_cam0`.
