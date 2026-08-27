@@ -787,3 +787,31 @@ cinepi-raw ccmp_preview.hpp.
 **Confirmed by:** operator (takes, overexposure statement, preview observations) + desk byte
 analysis of the five DNGs (scratchpad session 2026-08-27); kernel table via raspberrypi/linux
 rpi-6.12.y cfe_fmts.h.
+
+## 2026-08-27 (night) — Mono ClearHDR VERIFIED WORKING end to end; milestone tagged
+
+**Tested:** the full verification matrix on the mono rig after deploying the complete fix
+stack in one configuration: rp1-cfe Y16 csi_dt=0 kernel patch (first compile AND first load —
+built clean against 6.12.93 headers, loaded srcversion D0CCED8E6D1BA72AC1C26AA verified),
+sensor driver `innomaker-v1.0`, branches `fix/mono-clearhdr-stack` in cinemate + cinepi-raw,
+`--max-pixel-rate 380.0` (stock, from the fixed rp1_regime), `dtoverlay=imx585,cam0,mono,ccmp`,
+link 1440 Mbps (overlay default, in-spec), overclock overlay commented. Modes recorded with a
+structured scene at two shutter values each: 2K/4K 12-bit SDR, 4K 12-bit CCMP HDR, 16-bit
+ClearHDR with log off and with log-encode 12.
+**Worked: everything.** Operator: "big breakthrough… correct frames now in all modes."
+Overseer byte verification of the decisive 16-bit linear pair (takes 223145/223201): 3840×2200
+with OB rows sitting exactly at the 3200 pedestal, smooth scene gradients, no repeating motif,
+and ~3-stop exposure response matching the shutter step (signal-above-pedestal 3432 vs 417).
+The launch line simultaneously proved the rp1_regime fix (380 on stock), the mono AWB gating
+(no --awb args), and the label/stream agreement (requested 3840:2200:16 = configured).
+**Did not work:** nothing in the matrix.
+**Why:** the three root causes in the two earlier 2026-08-27 entries, all now fixed: kernel
+Y16 csi_dt (mono 16-bit garbage), stack-level mode/label divergence + preview stage refusing
+mono formats (12-bit "black"/"inverted" symptoms), binned ClearHDR invalid on the sensor
+(now gated out by the driver). Working config encoded into cinemate-install.sh + docs on
+`fix/mono-clearhdr-stack` (commit 02b2bec8: innomaker-v1.0 default, ccmp overlay param,
+scripts/patch-rp1-cfe.sh run automatically for imx585_mono). Milestone tag
+`milestone-mono-clearhdr-2026-08-27` on both repos. Overclock/link-rate exploration
+deliberately deferred to a follow-up session — 380/1440/stock is the verified baseline.
+**Confirmed by:** operator (live preview + takes), overseer byte analysis (this session),
+Sonnet round-3 verification results in `development/mono-clearhdr-fixes/`.
