@@ -724,3 +724,24 @@ All frames recorded over SSH and analysed off-device; takes and per-rate results
 `development/imx585-mode-matrix-handoff/LIVE-RESULTS-2026-08-27.md`. D-PHY source claims verified
 against `raspberrypi/linux` `rpi-6.12.y` and independently corroborated by the desk-analysis
 session, which also cites the RP1 datasheet §8.2.
+
+## 2026-08-27 — Ported upstream driver fixes did not change the mono ClearHDR fill
+
+**Tested:** driver branch `port/clearhdr-upstream-fixes` (Tiramisioux/imx585-v4l2-driver, three
+commits porting upstream bb53099a binned-ClearHDR gate + 728904bb 16-bit 2200-row mode +
+c0f54045 HMAX 472/floor 550 onto the 6.12.y snapshot), installed on the mono rig via
+`~/imx585-v4l2-driver` `setup.sh` DKMS rebuild.
+**Worked:** DKMS build/install and streaming on 6.12.93 — implied by the operator completing
+the test (this was the port's first compile anywhere; it was desk-authored with no compile
+gate on the Mac). The branch is therefore build-valid and stays on GitHub.
+**Did not work:** the mono ClearHDR fill defect persisted unchanged — operator: "same result".
+Exact run conditions (modes, link rate, overclock state, fps) were not captured in-session;
+the rig had been left at 1782/overclock-ON per LIVE-RESULTS-2026-08-27 §"rig left at".
+**Why:** mechanism not established. Two cautions for the next reader: (1) at ≤1440 Mbps the
+c0f54045 HMAX floor is inert (12-bit table value 660 ≥ floor 550), and the other two ports
+address binned BLC and 16-bit buffer height — so a persisting *full-res* fill at 1440 was not
+predicted to be fixed by this port and does not falsify it; (2) the overclock confound from
+the previous entry (1440 + overclock ON + fps 19 never run) is still the outstanding
+discriminator.
+**Confirmed by:** operator, 2026-08-27 chat session. Driver reverted to `6.12.y` (cb7c7a6)
+immediately after; operator pursuing a different approach.
