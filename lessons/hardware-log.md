@@ -632,3 +632,95 @@ is why the binning argument above, not the level count, is what settles 4K SDR.
 finally corroborates; "nothing happens in ClearHDR when i change iso"; "i have the sensor
 without a lens"). All frames recorded and analysed over SSH, 2026-08-26, takes
 `CINEPI_26-08-26_235123/235316/235620/235712/235808_*_cam0`.
+
+## 2026-08-27 — the RP1 D-PHY tops out at 1500 Mbps/lane, and it clamps instead of refusing
+
+**Tested:** imx585 **mono**, dev CM5 (4 GB, `6.12.93+rpt-rpi-2712`), **no lens** (bare sensor in
+room light). cinemate `dev` @ `4affc53`, cinepi-raw `dev` @ `4a85042`, libcamera `cinemate` @
+`3c7b9abd`, driver `6.12.y` @ `479117e` (HMAX patch **already reverted** before the session —
+the tree was clean and `HMAX=440` under `hdr_scale=2`). The six-mode matrix re-shot at four link
+frequencies: 1188, 1440, 1782, 2079 Mbps. Every take verified at `/dev/v4l-subdev2` before
+recording, with dynamic resolution disabled and exposure forced short.
+
+**Worked:**
+
+- **The receiver's ceiling is exactly 1500 Mbps/lane, and above it the kernel warns and then
+  *clamps* rather than refusing.** `rp1_cfe/dphy.c`: `if (mbps < 80 || mbps > 1500)
+  dphy_err("DPHY: Datarate %u Mbps out of range\n", mbps);` — void, no return. The lookup loop
+  runs `i < ARRAY_SIZE(table) - 1` and falls through to the last bucket `{1500, 0b111100}`. So
+  1782 and 2079 are physically programmed with the 1500 Mbps calibration bin; 1440 lands
+  correctly on bucket 37 `{1449}`. Verified byte-identical to upstream `rpi-6.12.y`, and the
+  function has only ever had two commits, neither touching it. `dmesg` shows the warning on
+  every configure at 1782 and 2079, and none at 1440 or 1188.
+- **4K 12-bit SDR is fixed by lowering the rate.** Uniform-4095 fill at 2079; real at 1188,
+  1440 and 1782. The old "Defect A" is rate-dependent, not a mode-validity property.
+- **In-spec mono ClearHDR exists.** 4K 12-bit ClearHDR is real at **1440 Mbps with a stock RP1
+  clock** (`clk_sys` 200000000, `RP1 regime: stock -> 380 MPix/s`), operator-confirmed. This
+  kills the previous "12-bit ClearHDR has only ever produced fills on mono" conclusion.
+- Defect C (`hdr_gain_adder` stomped at every startup) fixed by seed-if-absent in `main.py` and
+  verified across two reboots. The decisive check is that Redis `hdr_threshold_low=4095`
+  survives while `settings.jsonc` says `0` — pre-fix the unconditional seed overwrote it.
+
+**Did not work:**
+
+- **2079 Mbps degrades a working mode over minutes.** 1928×1090 12-bit SDR went **1090/1090 rows
+  → 5 rows → 47 rows** in ~4 minutes with no physical change; everything below the last valid
+  row is exactly 0, and the monitor showed a bright band at the top over black. Thermals were
+  clean (48 °C, `throttled=0x0`) and the sensor's exposure/gain were verified moving throughout.
+  1782 held full row counts through three ClearHDR sweeps plus a high-gain sequence over ~5
+  minutes, so *being out of range is not sufficient* — 39% over clamps far worse than 19% over.
+- Both 16-bit ClearHDR modes show stripes at 1440/stock. The only rate where the operator has
+  agreed 16-bit ClearHDR works is 2079.
+- HD 12-bit ClearHDR failed at every rate by measurement, **but the operator reports it working
+  at 1440/stock** — unresolved, see below.
+
+**Why:** **two independent defects, not one.** (a) The D-PHY clamp costs receiver margin and
+explains the *stability* gradient (1440 clean, 1782 marginal-but-holding, 2079 truncating). It
+cannot explain *which* modes fill, because the PHY config is mode-invariant: `imx585.c:1582-1587`
+sets `link_freq_idx` once at probe as a read-only control, and `v4l2-common.c:482-493` ignores
+the `mul` argument, so bit depth never enters the calculation — all six modes program the PHY
+identically. The disqualifying counterexample is that at 2079 the *largest* payload (4K 16b HDR)
+is real while 4K 12b SDR is 100% 4095. (b) The fills are sensor-side: they are byte-exact
+deterministic, and two different resolutions (1928×1090 and 3856×2180) produced the *same*
+`0c 80 c8` repeat across the whole strip. Changing link frequency reprograms the sensor's
+`DATARATE_SEL`, which is why lowering the rate rescues 4K 12b SDR — not because the link got
+cleaner.
+
+**Method traps that cost real time this session — all three are general:**
+
+- **A fill-vs-real statistical discriminator gives false REALs.** `discriminator.py` scored 4K
+  12b ClearHDR REAL at 2079 (2180/2180 distinct rows, 567 uniques, populated ±1 neighbours) on a
+  frame whose histogram was **frozen across a real ~5-stop exposure change** — value 3627 held
+  22.82% → 22.81%, every top-10 count within 0.1%. **Exposure response is the reliable test, not
+  frame statistics.** Even that was not sufficient for 16-bit: mode 5 responded (1.55× mean) yet
+  the operator sees stripes. A `16384 = 2^14` unique count is a reliable *fill* tell for 16-bit
+  modes here; the one operator-agreed working case showed 9400 instead.
+- **Saturation reads as FILL.** With no lens the bare sensor floods, and an entire 1440 run was
+  invalidated by `exposure` having silently reset to VMAX (2250 lines = 360°). Confirm `exposure`
+  at the subdev before trusting any uniform frame.
+- **Settings silently fail to re-apply after a resolution change.** A mode switch resets the
+  sensor's exposure to VMAX while Redis keeps the old `shutter_a`, so re-issuing the same value
+  is swallowed by `set_value`'s same-value dedup and the sensor is never reprogrammed. Workaround:
+  set a different value, then the target. This is a real cinemate defect, not just a test artifact.
+- `set resolution N` is remapped by dynamic resolution — disable it first or the cell labels in a
+  mode matrix are wrong (`set resolution 0` landed on `sensor_mode=4` once).
+
+**Open / contradicted, deliberately not resolved here:**
+
+- **The overclock test is confounded.** The 1440-with-overclock run used fps 25 — exactly the
+  advertised ClearHDR ceiling at that rate — while the 1440-stock run used fps 19. So mode 3's
+  recovery may be the stock clock, the fps headroom, or both. The isolating test (1440 + overclock
+  ON + fps 19) was not run and should be the next thing anyone does.
+- Upstream's AppNote reading says binned ClearHDR is 16-bit-only and 12-bit binned HDR yields
+  all-BLC frames; the operator reports that mode working at 1440/stock, and its measured mean
+  (1177) is nowhere near black level (200). Resolve before porting the upstream gate `bb53099a`,
+  which would disable that mode permanently.
+
+**Confirmed by:** operator throughout, watching the HDMI monitor and the web preview — including
+three calls that overrode the analysis tool ("2k and 4k sdr is now working but clear hdr modes
+are not", "hdr 12 bit in 4K now worked!", "mode 4 shows stripes, mode 5 shows stripes as well").
+All frames recorded over SSH and analysed off-device; takes and per-rate results in
+`development/pi-test-takes/2026-08-27-phase4/` and
+`development/imx585-mode-matrix-handoff/LIVE-RESULTS-2026-08-27.md`. D-PHY source claims verified
+against `raspberrypi/linux` `rpi-6.12.y` and independently corroborated by the desk-analysis
+session, which also cites the RP1 datasheet §8.2.
