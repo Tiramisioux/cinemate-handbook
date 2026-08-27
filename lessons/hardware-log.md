@@ -745,3 +745,45 @@ the previous entry (1440 + overclock ON + fps 19 never run) is still the outstan
 discriminator.
 **Confirmed by:** operator, 2026-08-27 chat session. Driver reverted to `6.12.y` (cb7c7a6)
 immediately after; operator pursuing a different approach.
+
+## 2026-08-27 (evening) — Mono ClearHDR byte-level forensics: 16-bit is a capture-path format bug, binned 12-bit is real sensor BLC
+
+**Tested:** structured/overexposed mono takes pulled off /media/RAW and decoded byte-by-byte on
+the desk (takes 19:07-19:08 @1782-era config and 20:13-20:14 @1440 default, old driver 479117e
+loaded — NB the operator re-ran the 6.12.y revert at ~19:52, so the "innomaker similar results"
+session and these takes ran DIFFERENT drivers; check dmesg `base=` vs `link_freq=` HMAX line to
+know which driver is loaded before trusting any session).
+**Worked:** 4K 12-bit CCMP HDR mono RECORDS REAL DATA (19:07 take: smooth companded values,
+correct b=1 LinearizationTable). 12-bit unpacking, CCMP table attach, and DNG geometry all
+correct in that mode.
+**Did not work:**
+- 16-bit mono (both takes, both rates): buffer contains a repeating 16-byte motif = PiSP
+  COMP1-style compressed blocks in a buffer labeled/consumed as uncompressed R16, additionally
+  scrambled by libcamera's 16-bit endian swap. Kernel rpi-6.12.y `cfe_fmts.h` shows why mono
+  differs from color: Bayer 16-bit entries carry `csi_dt = 0` ("Avoid RP1 HW mismatch for
+  16-bit modes") but the Y16 entry kept `csi_dt = MIPI_CSI2_DT_RAW16` — the 6.12.93 16-bit
+  workaround was never applied to mono. Operator's hypothesis ("endian swap different for
+  mono?") pointed here. Fix direction: align the Y16 entry with the Bayer16 entries and
+  rebuild rp1-cfe; then mono 16-bit needs the 2200-row mode (OB prepend passes when csi_dt=0),
+  i.e. pairs with upstream-main/innomaker driver.
+- Binned 12-bit CCMP HDR mono: constant 200 = BLC pedestal across the frame WITH THE SCENE
+  OVEREXPOSED — a working mode cannot output pedestal on a blown-out scene. AppNote §2 p.6 /
+  bb53099a binned-ClearHDR gate CONFIRMED for mono at pixel level (color b=4 passed the
+  2026-08-10 goldens, so it is mono-specific in practice).
+**Why:** see above; two independent mechanisms, neither is the sensor driver, which is why both
+driver generations "failed identically". The earlier "fill at 1440 / works at 1782" pattern is
+now CONTAMINATED evidence: the 16-bit legs were the COMP1/swap bug (rate-independent), the new
+1440 takes were saturation-constants (saturation reads as fill — trap re-confirmed), and mode
+labels diverged from actual modes (Redis/table vs driver nearest-match; SensorBinning picked
+b=4 for a 4K request; a "12-bit" launch got an R16 raw stream). 1440-vs-1782 for mono ClearHDR
+is REOPENED, retest only after the fixes with a non-clipped structured scene + exposure
+response.
+**Also confirmed:** cinemate rp1_regime misclassifies stock clk_sys 333 MHz as overclocked and
+passes --max-pixel-rate 580 with the overclock overlay commented out (journal 19:52:46) — clk_sys
+cannot discriminate regimes on 6.12.93; the config.txt overlay line must be the authority.
+Suspected (unverified): ccmpPreview "whites become black" = highlight overflow wrap
+(decompanded 63265 × preview exposure gain > 65535) — check renderer clamping in
+cinepi-raw ccmp_preview.hpp.
+**Confirmed by:** operator (takes, overexposure statement, preview observations) + desk byte
+analysis of the five DNGs (scratchpad session 2026-08-27); kernel table via raspberrypi/linux
+rpi-6.12.y cfe_fmts.h.
