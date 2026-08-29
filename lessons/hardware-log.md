@@ -815,3 +815,55 @@ scripts/patch-rp1-cfe.sh run automatically for imx585_mono). Milestone tag
 deliberately deferred to a follow-up session — 380/1440/stock is the verified baseline.
 **Confirmed by:** operator (live preview + takes), overseer byte analysis (this session),
 Sonnet round-3 verification results in `development/mono-clearhdr-fixes/`.
+
+## 2026-08-29 — GPIO10 double-claim crashed cinemate at every boot; latent in the shipped config
+
+**Tested:** diagnosis of a Pi (CM5, 4049 MB, kernel 6.12.93+rpt-rpi-2712, branch
+`fix/mono-clearhdr-stack` at 02b2bec8) that failed to start cinemate on every boot.
+`cinemate-autostart` sat in `failed`, `ExecStart` exiting 1 within ~3 s of launch.
+
+**Worked:** disabling the rotary encoder in `settings.jsonc`
+(`hardware_controls.rotary_encoders[0].enabled` true → false) restored a clean boot
+immediately, with no code change and no reboot — operator confirmed "boot is confirmed, now
+it works." Recovery from the `failed` unit state needed `systemctl reset-failed` then `start`,
+not `restart` (see the console-handoff hang recorded elsewhere in this log).
+
+**Did not work:** the camera would not start at all while that one flag was true. The
+journal's stated reason named only the pin —
+`GPIOPinInUse: pin GPIO10 is already in use by <gpiozero.Button object on pin GPIO10 ...>` —
+and neither of the two `settings.jsonc` entries that collided, so the message gave no route
+back to the setting that caused it.
+
+**Why:** the shipped `settings.jsonc` assigns GPIO10 twice — `hardware_controls.buttons[1].pin
+= 10` (press → `rec`) and `hardware_controls.rotary_encoders[0].button_pin = 10`. The pair is
+present in committed history, not introduced by the operator; it is harmless only because the
+encoder ships `enabled: false`. `ComponentInitializer` guarded `reserved_output_pins` but
+never tracked pins its own inputs had claimed, so the encoder's `SmartButton` construction
+reached gpiozero and raised. A settings-editor save at 11:34:52 on 2026-08-28 flipped that one
+flag; the crash follows at 11:38. So a one-click UI toggle detonated a collision that had been
+sitting in the default config all along — the kind of thing that reads as "the encoder is
+broken" rather than "two entries share a pin."
+
+The same editor save also corrupted `sensors.camN.log_encode` from boolean `false` to the
+**strings** `"true"` (cam0) and `"false"` (cam1). That key's editor control carried
+`data-type="string"`, and `readControlValue()` returns `el.value` verbatim for anything not
+`bool`/`number`. A string fails silently in the footage-losing direction: `cinepi_multi` gates
+on `if log_requested:`, and a non-empty string is truthy, so `"false"` read as log-ON; the
+truthy branch then forwards anything that is not literally `True` as an explicit target, so
+`"true"` matched no valid bit depth and recorded LINEAR with only a warning. "Off" meant
+on-but-broken; "On" meant off-with-a-warning. That save also dropped the `system.web_api` and
+`system.recovery` blocks and stripped every comment.
+
+**Not yet verified on hardware:** the code fixes for both defects are on `dev` (cf31459e) and
+`fix/mono-clearhdr-stack` (6d62f762) but were **not running on the Pi** when boot was
+confirmed — it was still at 02b2bec8, 8 commits behind, with `_claim_pin` and
+`normalize_log_encode` both absent. The confirmed finding is therefore the *mechanism* and the
+*settings-level* fix; the duplicate-pin guard (skip-with-both-names instead of raising) and the
+`log_encode` normalisation are so far only covered by unit tests — including a MockFactory
+reproduction that raises the identical `GPIOPinInUse` string against pre-fix code. Both still
+need a Pi run. Note the Pi's `settings.jsonc` still carries `"log_encode": "true"` for cam0, so
+once it does pull, cam0 starts genuinely recording log rather than linear.
+
+**Confirmed by:** operator (boot restored, this session); journald `cinemate-autostart` on the
+unit; git history for the pin pair being pre-existing; offline gpiozero MockFactory
+reproduction against the Pi's own `settings.jsonc` (this session).
