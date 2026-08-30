@@ -1,8 +1,8 @@
 # IMX585 Clear HDR light-at-startup clamp — external research findings
 
-**Status: IN PROGRESS.** Cloud research session, started 2026-08-30. Sections land incrementally,
-one commit per research question; a section marked *(pending)* has not been researched yet, and
-a section marked *(complete)* has had its lane finished and committed. Evidence lanes are
+**Status: COMPLETE.** Cloud research session, 2026-08-30/31; all six question lanes researched
+(six parallel research agents + overseer verification of load-bearing citations), sections
+committed incrementally (one commit per question, per the brief). Evidence lanes are
 strictly labelled: **[doc]** = documented fact (verbatim quote + URL) · **[anecdote]** =
 community report (URL, date, hardware, closeness of match) · **[inference]** = reasoning,
 explicitly ours. Everything here is EXTERNAL evidence; the hardware fingerprint itself is
@@ -13,7 +13,44 @@ established in `lessons/hardware-log.md` (campaign rounds 0.1–3.3) and
 
 ## 1. Headline
 
-*(pending — written last, after Q1–Q6.)*
+**No smoking gun. No known erratum, technical notice, or documented startup requirement
+matching the light-at-engage clamp exists anywhere public, in any language searched — and no
+publicly visible driver for the IMX585 or any Clear HDR sibling codes a workaround for it.**
+We violate nothing that public or driver-relayed AppNote text documents: our engage runs a
+valid threshold pair, in-range slopes and gains, and a legal mode pairing.
+
+What the external record *does* establish, and what makes the clamp legible:
+
+1. **"Output only the BLC pedestal" is Sony's documented failure semantics for a
+   mis-configured Clear HDR combine.** At least five static conditions produce exactly our
+   signature — prohibited EXP_TH order, out-of-range ACMP slopes, prohibited EXP_BK index,
+   invalid binned-12-bit mode ("the part returns BLC if asked"), over-limit exposure
+   (INNO-MAKER: "fully black frame") — all register-visible and light-independent. Our clamp
+   matches the fallback's *signature* exactly while matching none of its documented
+   *triggers*: it is best read as a sixth, condition-triggered entry into the same all-reject
+   fallback state, reached through internal state the registers neither set nor report (Q1).
+2. **The combine stage is separable silicon**: Sony's own reference ships IMX662/678 Clear HDR
+   with the combiner bypassed (WDMODE=0x08, HG/LG uncombined, SoC fusion), and FRAMOS ships
+   IMX585 16-bit Clear HDR with COMBI_EN=0x00 — giving the campaign register-level tools to
+   corner the latch (Q2).
+3. **The closest documented relative is on our own platform**: Raspberry Pi's vendor helper
+   for the IMX708 (Sony on-chip QBC-HDR merge) silently discards the first startup frame in
+   HDR mode only — startup-specific, combine-specific, absent in SDR. Our latch looks like
+   the pathological limit of that same settle: the one-frame bad state that never ends when
+   the first integrations are uniformly lit (Q6).
+4. **The only vendor-published cure for black Clear HDR frames is an integration cut** —
+   INNO-MAKER's "reduce --shutter to recover" — operationally identical to our deterministic
+   ~0.6 s SHR-step release, independently suggesting a short-integration kick as the fix
+   template (Q1/Q4).
+5. The exact fingerprint is **publicly novel**: nobody drives on-chip Clear HDR but the small
+   Pi-driver crowd, and astro users engage in darkness — the one arm where the bug is
+   invisible (Q3).
+
+Coverage honesty: this sandbox's egress proxy blocked all patent databases, publishers, Sony,
+FRAMOS's doc portal, and nearly every forum — those items rest on labelled search snippets,
+and the machine-vision release-note space is *unassayed*, not clear. The primary documents
+(TechnicalDatasheet Rev 0.2, ClearHDR AppNote Rev 1.0 in full, IMX678 Software Reference
+Manual Rev 4.0, Standard_Register_Setting.xlsx) are obtainable — see section 5.
 
 ---
 
@@ -687,102 +724,124 @@ flagged for an unproxied machine: "Sony IMX290/462 image sensors I2C xfer peculi
 
 ## 3. Hardware-testable predictions
 
-*(raw accumulating list, one block per completed question; deduplicated and renumbered in a
-final pass after Q6.)*
+Deduplicated and ranked across Q1–Q6 (per-lane raw versions preserved in this branch's commit
+history). Effort tags: **[runtime]** = existing V4L2 controls / raw I2C / operator action,
+no rebuild; **[i2c]** = raw I2C write while streaming; **[driver]** = imx585.c edit + DKMS
+rebuild; **[driver+DT]** = also needs CFE/device-tree tolerance. Rig = Pi CM5 + IMX585,
+I2C access, frame capture, register readback, persistent journals.
 
-From Q1:
-- If commit be3cb94 is right that the EXP_BK weighted-blend path clamps near BLC, then writing
-  EXP_TH_H=EXP_TH_L=0x1000 into a healthy lit stream should collapse active pixels to
-  near-pedestal within a frame or two — a second, register-visible route into the same
-  combiner-fallback state our clamp enters invisibly.
-- If AppNote §2 p.6's "returns BLC if asked" fallback is the same state as our clamp, then
-  while clamped, sweeping EXP_BK 0h–7h and ACMP1/2 across their valid ranges should produce
-  zero output change (combiner bypassed to pedestal, not mis-blending), whereas the same sweep
-  on a healthy stream visibly changes tone mapping.
-- If INNO-MAKER's "fully black when --shutter exceeds ~4484 lines" limit shares our clamp's
-  mechanism, then commanding exposure above 4484 lines on a healthy lit stream should
-  reproduce exact-pedestal output that a subsequent short-SHR command releases in ~0.6 s —
-  the same release signature would tie both black-frame conditions to one internal state
-  machine.
-
-From Q3:
-- If Kurokesu's warning describes our latch rather than static threshold mistuning, then a
-  half-covered scene at lit stream start → the lit region clamps to pedestal while the covered
-  region does not, reproducing "bright parts render black" spatially within one frame (this is
-  also the campaign's open structured-scene question, sharpened).
-- If the AppNote §4.2 "blend-off" state is architecturally distinct (EXP_TH_H=EXP_TH_L=0x1000
-  routes through the EXP_BK weighted blend), then pre-setting both thresholds to 0x1000 before
-  a lit stream start → no clamp; a clamp there would prove the latch sits below the
-  selection/blend fork and is a new, reportable finding.
-- If ToupTek's FPGA firmware fixes addressed HDR re-initialization rather than tuning, then
-  toggling COMBI_EN (0x3024) 0x02→0x00→0x02 mid-stream on a lit clamped stream → releases or
-  re-arms the clamp, mirroring what a firmware-side combine reinit would do.
-
-From Q2:
-- If FRAMOS's fr_imx585 16-bit table is valid silicon usage (WDMODE=0x10 + COMBI_EN=0x00 +
-  MDBIT=0x03), then starting a lit 16-bit stream with COMBI_EN=0x00 → either no clamp (the
-  clamp lives in the built-in combination gated by COMBI_EN) or clamp persists (it lives in
-  the WDMODE=0x10 data-selection stage upstream of combination). Either outcome localizes the
-  latch by one register.
-- If the sibling WDMODE map transfers (0x08 = Clear HDR dual-stream uncombined per FRAMOS NXP
-  imx662/678 tables), then a lit engage with WDMODE=0x08 → non-pedestal HG/LG data (likely two
-  virtual channels / doubled rows, needing CFE DT tolerance), proving readout and both gain
-  chains are healthy while only the combiner latches.
-- If Kurokesu's "bright parts of a scene can render black" is the per-pixel form of the same
-  mechanism, then a lit engage on a half-flooded/half-dark scene → only the lit half sits at
-  exactly the pedestal while the dark half shows normal read noise (per-pixel data-selection
-  verdict), whereas a fully global latch predicts the dark half clamps too.
-
-From Q4:
-- If FRAMOS's engage arrangement (0x3000=0 → 40 ms → XMSTA=0) matters, then swapping our
-  driver to standby-release-first with a ≥40 ms gap before XMSTA → lit starts come up with
-  signal; if they still clamp, the XMSTA/standby ordering is exonerated.
-- If youjunl's nonzero low threshold avoids the clamp, then writing EXP_TH_L=512 instead of 0
-  before standby release → lit starts produce non-pedestal output from frame 1.
-- If INNO-MAKER's shutter rule generalizes to a fix template, then baking an "integration
-  kick" into enable_streams — program SHR to the Clear HDR minimum (16 lines) for the first
-  frame after master start, restore the requested exposure a frame later — → lit starts
-  recover within ~2 frames instead of never, matching the ~0.6 s commanded-release timing.
-
-From Q5:
-- If the corrupted-reference-at-engage story is right, then engaging Clear HDR under the same
-  flood but with SHR pre-set near its Clear HDR maximum (shortest legal integration, so the
-  field reads far below the selection thresholds) → clean engages, versus consistent clamps at
-  long integration under identical lux — the trigger is signal level at engage, not
-  illumination per se.
-- If US8648946-style "update on imaging-condition change" applies beyond SHR, then while
-  clamped, a large commanded EXP_GAIN step (hdr_gain_adder 2→5 and back) or a rewrite of
-  EXP_TH_H with its current value → release with SHR untouched; if only the SHR path releases,
-  the re-init hook is exposure-specific.
-- If the reference is sampled from the pixel array/OB at stream start only (test patterns
-  "bypass the pixel array entirely so the blend logic is never exercised" — commit 954a52a),
-  then starting the Clear HDR stream with TPG enabled under flood and disabling TPG ~5 s in →
-  the stream comes up clean and stays clean (arming window missed), while the same sequence
-  without TPG clamps — proving the corruptible initialization is confined to the first frames.
-
-From Q6:
-- If the IMX708 "first HDR startup frame is bad" mechanism is the benign form of our latch,
-  then starting the Clear HDR stream with integration pre-programmed to its minimum for the
-  first few frames, then lengthening it → no black lock even under uniform bright light — the
-  release stimulus (large integration cut) baked into the start sequence. (Converges with
-  Q4's integration-kick prediction.)
-- If the IMX294 crossover pathology shares the HG/LG selector lineage, then a stream started
-  against a high-contrast half-dark/half-bright target → never latches at any brightness,
-  while a uniform gray card latches across a wide brightness range — uniformity, not absolute
-  level, is the arming condition. (Converges with Q2/Q3's structured-scene predictions.)
-- If the Jetson IMX662 analogy (platform-side fusion) were right, defect pixels would blacken
-  with everything else; since hot pixels ride through on our rig, a raw-CSI2 tap during a
-  clamp should show pedestal-exact black already in the sensor's own output — re-confirming
-  sensor locus against any lingering ISP suspicion.
+1. **[runtime]** If the corrupted-reference-at-engage story (Q5) is right, then a lit engage
+   with SHR pre-set to the shortest legal integration → clean engages, versus consistent
+   clamps at long integration under identical lux — signal level at engage, not illumination,
+   is the trigger.
+2. **[driver]** If the integration-kick template (Q4/Q6: INNO-MAKER's "reduce --shutter to
+   recover" + the IMX708 first-HDR-frame precedent + our own ~0.6 s SHR release) generalizes,
+   then programming SHR to the Clear HDR minimum for the first frame(s) after master start and
+   restoring one frame later → lit starts recover within ~2 frames instead of never.
+3. **[runtime]** If youjunl's threshold policy (Q4) is protective, then setting EXP_TH_L=512
+   (TH_H=0x0FFF) via the existing data-selection control before a lit engage → non-pedestal
+   output from frame 1.
+4. **[runtime]** If the AppNote blend path is architecturally distinct (Q3), then pre-setting
+   EXP_TH_H=EXP_TH_L=0x1000 before a lit engage → no clamp (blend path immune), while a clamp
+   there proves the latch sits below the selection/blend fork — a new, reportable finding.
+5. **[driver]** If FRAMOS's engage arrangement (Q4: standby release → 40 ms → XMSTA, vs our
+   XMSTA-then-standby with no gap) matters, then swapping our driver to their order → lit
+   starts come up clean; if they still clamp, XMSTA/standby ordering is exonerated.
+6. **[driver]** If FRAMOS's 16-bit table (Q2: WDMODE=0x10 + COMBI_EN=0x00 + MDBIT=0x03) is
+   valid silicon usage, then a lit 16-bit engage with COMBI_EN=0x00 → clamp present/absent
+   localizes the latch to the data-selection stage vs the built-in combination stage.
+7. **[driver+DT]** If the sibling WDMODE map transfers (Q2: 0x08 = Clear HDR dual-stream
+   uncombined), then a lit engage with WDMODE=0x08 → non-pedestal HG/LG data (likely two
+   streams / doubled rows), proving readout and both gain chains healthy while only the
+   combiner latches.
+8. **[runtime]** If uniformity rather than level is the arming condition (Q2/Q3/Q6: Kurokesu's
+   "bright parts render black", IMX294 flat-field pathology), then a lit engage on a
+   structured or half-covered scene → either no clamp, or a spatially split frame (lit half at
+   exact pedestal, dark half normal) — distinguishing a per-pixel selection verdict from a
+   global latch, and answering the campaign's own load-bearing product question.
+9. **[runtime]** If the clamp is the combiner's generic fallback state (Q1: "returns BLC"),
+   then sweeping EXP_BK 0h–7h and ACMP1/2 across their valid ranges while clamped → zero
+   output change, whereas the same sweep on a healthy stream visibly changes tone mapping.
+10. **[runtime]** If the re-init hook is exposure-specific (Q5: US8648946-style
+    "update on imaging-condition change"), then a large EXP_GAIN step (hdr_gain_adder 2→5 and
+    back) or a rewrite of EXP_TH_H with its current value while clamped → no release, while
+    the SHR step releases.
+11. **[i2c]** If a combine re-init is what ToupTek's HDR firmware fixes performed (Q3), then
+    toggling COMBI_EN 0x02→0x00→0x02 by raw I2C on a clamped stream → release (or re-arm).
+12. **[runtime]** If INNO-MAKER's over-limit black frame shares our mechanism (Q1), then
+    commanding exposure above ~4484 lines on a healthy lit stream → exact-pedestal output that
+    a subsequent short-SHR command releases in ~0.6 s, tying both black-frame conditions to
+    one internal state machine.
+13. **[runtime]** If the corruptible initialization is sampled from the pixel array in the
+    first frames only (Q5: test patterns "bypass the pixel array entirely so the blend logic
+    is never exercised", commit 954a52a), then engaging with TPG enabled under flood and
+    disabling TPG seconds later → a clean stream throughout, while the same sequence without
+    TPG clamps.
+14. **[runtime]** If the equal-threshold blend state is the same fallback (Q1: be3cb94), then
+    writing EXP_TH_H=EXP_TH_L=0x1000 into a healthy lit stream → near-pedestal collapse
+    within a frame or two — a register-visible route into the state, useful for calibrating
+    detectors against a reproducible clamp.
 
 ---
 
 ## 4. Candidate remediations used elsewhere
 
-*(pending)*
+Ordered by evidence strength × cost on our stack (cinemate `dev` + cinepi-raw `dev` + driver
+innomaker-v1.0 @ 70bdb26 = upstream main, libcamera `cinemate`).
+
+1. **Integration kick at engage** — sources: INNO-MAKER manual (*"if the image goes black,
+   suspect the shutter is too large first — reduce --shutter … to recover"*, Q1/Q4); the
+   IMX708 precedent that HDR startup frames are expected-bad (Q6); our own hardware-proven
+   ~0.6 s deterministic SHR release. **On our stack**: in `imx585_enable_streams()`, after
+   master start, program SHR for the shortest legal Clear HDR integration for the first
+   frame(s), then restore the requested exposure (delayed work item or frame-event hook);
+   userspace alternative: a cinemate post-engage shutter kick through the normal control path
+   — noting the stranded f7cedba automated kick **never actually ran** on the rig, and
+   **campaign debt 17 (the deterministic 374–376-line SHR restore offset) must be fixed
+   first**, or the kick's own restore mis-exposes every take it touches. Verify delivery at
+   the silicon (SHR readback) as rounds 3.1–3.3 did.
+2. **Startup-frame hiding** — source: raspberrypi/libcamera `cam_helper_imx708.cpp`
+   (`hideFramesStartup()` returns 1 in HDR mode only, Q6). **On our stack**: a libcamera cam
+   helper for imx585 hiding N startup frames — but on its own this only hides a one-frame
+   settle; our clamp persists indefinitely, so frame-hiding is only useful **paired with
+   remediation 1** (hide the kick's short-exposure frames so takes start clean).
+3. **Engage-order change to the FRAMOS arrangement** — source: fr_imx585 (`{STANDBY,0x00}` →
+   30 ms wait (+10 ms) → XMSTA, Q2/Q4). **On our stack**: reorder `enable_streams()` to
+   release standby first, wait ≥40 ms, then write XMSTA=0 — a three-line driver change,
+   directly A/B-testable (prediction 5).
+4. **Threshold-policy variants at engage** — sources: FRAMOS ships untouched power-on
+   defaults 0x1000/0x1000; youjunl writes 0x0FFF/512 (Q2/Q4). **On our stack**: pure runtime
+   config through the existing `hdr_datasel_th` control (predictions 3–4); if either engages
+   clean under flood, cinemate seeds it as the boot default and (if needed) steps to the
+   preferred 0x0FFF/0 after the first frames.
+5. **Combiner bypass configurations** — sources: FRAMOS 16-bit Clear HDR with COMBI_EN=0x00;
+   Sony/NXP reference IMX662/678 Clear HDR as WDMODE=0x08 dual-stream with SoC-side fusion
+   (Q2). **On our stack**: COMBI_EN=0x00 is a one-line mode-table variant (prediction 6,
+   diagnostic first — output semantics unknown); WDMODE=0x08 is the architecture escape hatch
+   — HG/LG fused in software — but needs CFE/libcamera dual-stream handling plus a fusion
+   stage in cinepi-raw, so it is a last resort if the on-chip combiner proves unfixable.
+6. **Operational dark-engage protocol** — source: effectively what the astro community does
+   (streams started in darkness), and our own 2/2-clean covered engages with correct imaging
+   after uncovering. **On our stack**: zero code — cap or cover the sensor through every
+   Clear HDR engage (boot, mode switch, storage-event relaunch), uncover after streaming
+   starts; cinemate could enforce it by prompting/waiting at engage. The highest-reliability
+   mitigation available today, and the fallback if remediation 1 disappoints.
 
 ---
 
 ## 5. Most promising single follow-up lead
 
-*(pending)*
+**Harvest the publicly mirrored primary documents from an unproxied machine.** Every research
+lane converged on the same wall: the mechanism-bearing text lives in Sony documentation this
+session could locate but not fetch. Concretely: the "IMX585-AAQJ1-C TechnicalDatasheet E Rev
+0.2" (Scribd id 800148250; LCSC datasheet PDF C5185358; dl.khadas.com
+`imx585-datasheet.pdf`), the **"IMX678 Software Reference Manual E Rev 4.0"** (Scribd id
+897816949 — a register-level manual for the *same* Clear HDR combine block, and the largest
+single document in the family), the khadas IMX678 datasheet mirrors, and the
+"IMX585_Standard_Register_Setting" Excel the datasheet references. These are one browser
+session away for anyone outside this sandbox, and they are exactly where a combine-stage
+initialization requirement, wait-frame rule, or black-output caveat would be written — the
+campaign already holds the ClearHDR AppNote Rev 1.0, so the SRM's §-level combine description
+is the biggest unread text. If the harvest yields nothing, the hardware track stands on its
+own: predictions 1–2 (short-integration engage / integration-kick) test the assembled Q5
+mechanism directly and double as the fix template every other ecosystem lacks.
