@@ -1011,3 +1011,39 @@ in the round 0.1 result (campaign overseer thread, 2026-08-30); overseer source 
 against `imx585.c` @ 70bdb26, which the worker's own on-Pi diff showed byte-identical to the
 DKMS build source. Scene state operator-confirmed. README fix for the prohibited-pair example
 opened as cinepi-raw PR #70 (docs-only).
+
+## 2026-08-30 — Campaign round 0.2: control-cache replay closed end-to-end; journals persistent; pre-engage WDR toggles classified as cache-only
+
+**Tested:** round 0.2 on the mono rig — persistent journald via drop-in
+(`/etc/systemd/journald.conf.d/99-clearhdr-campaign.conf`, Storage=persistent,
+SystemMaxUse=500M) plus a single warm reboot, with raw-I2C register readbacks before and
+after. No threshold key written all round. Stack unchanged from round 0.1 (cinemate
+bf4b68d / cinepi-raw dad2247 / driver 70bdb26, self-heal off), scene bare.
+
+**Worked:** every pre-registered prediction. The cached EXP_TH_L=3000 survived to the
+reboot (pre-reboot readback 0x0FFF/0x0BB8) and was gone after it (0x0FFF/0x0000, the
+driver-default pair) — module reload clears the V4L2 control cache, closing the replay
+mechanism end-to-end: entry confirmed at source in round 0.1 (`imx585.c:2024` + `:1749`),
+exit confirmed on hardware here. Round 0.1's boot survived as journal boot -1 (the drop-in
+wins over the stock `Storage=volatile` conf, which was left untouched); its full journal is
+also archived at `/home/pi/journal-20260830-round01-boot.log` (827 KB, monotonic format).
+Second consecutive boot with the self-heal grep empty (#176's gate). Real-boot signature
+reconfirmed: probe power pair + exactly 2 engages (Plymouth double start), streaming at
+t=18.8 s — a full warm reboot to streaming costs ~19 s, which prices the coming boot series.
+
+**Did not work:** nothing — no prediction failed.
+
+**Why (new observation classified):** the worker flagged `HDR=1→0→1` journal toggles
+preceding each engage (~335 ms at 0). These are cinemate's dual-probe mode enumeration and
+are cache-only: the WDR s_ctrl handler (`imx585.c:1307`) only flips the driver's
+`clear_hdr` flag, activates/deactivates the HDR knob controls, forces HCG off, and updates
+gain limits — no `cci_write` in the path (the register-writing switch says "Handled above"
+and breaks) — and both toggle bursts land while the sensor is unpowered (t=8.29–8.87 vs
+power_on at t=10.27; t=16.30/16.56 between power_off 16.10 and power_on 17.85). They cannot
+reach the silicon; WDMODE is only written from the register table during start_streaming,
+as previously established.
+
+**Confirmed by:** worker raw-I2C readbacks and journal excerpts pasted verbatim in the
+round 0.2 result (campaign overseer thread, 2026-08-30); overseer source citations against
+`imx585.c` @ 70bdb26. Related: cinepi-raw PR #70 (README prohibited-pair example) merged
+2026-08-30 — campaign debt 3 closed.
