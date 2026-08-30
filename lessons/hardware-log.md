@@ -962,3 +962,52 @@ byte-identical to the DKMS build source on the Pi; overseer arithmetic on SHR/VM
 independent refutation of the `BIN_MODE` lead. Note `srcversion` disagreed with an earlier
 session's recorded value on identical source — it is kernel-header-sensitive, so **verify driver
 identity by source diff, not by `srcversion`**.
+
+## 2026-08-30 — Campaign round 0.1: #176/#69 gates PASS; a threshold write outlives restarts via V4L2 control-cache replay
+
+**Tested:** ClearHDR stabilisation campaign round 0.1 on the mono rig — decontamination and
+threshold-semantics verification. Stack: cinemate `dev` @ bf4b68d (= #176 merge), cinepi-raw
+`dev` @ dad2247 (= #69 merge), both pulled and rebuilt on the Pi; driver `innomaker-v1.0`
+@ 70bdb26 verified by source diff (not srcversion); kernel 6.12.93 + rp1-cfe Y16 patch; mono
+16-bit linear ClearHDR (sensor_mode 4, 3840×2200); scene bare/lensless (operator-confirmed);
+self-heal `"self_heal": false`. One boot, two managed stop→starts, raw-I2C readbacks of
+0x36D0/0x36D4 after every threshold command.
+
+**Worked:** #176's gate holds on-rig — the whole-boot journal grep for
+self-heal/gain-shock/mode-bounce (after filtering `debounce` false positives) is empty across
+a ClearHDR start and two restarts. #69's fix holds — `set hdr threshold high 4095` lands
+EXP_TH_H=0x0FFF / EXP_TH_L=0x0000 (the key swap is dead), and the prohibited pair (low=3000
+accepted as a valid intermediate, then high=500) is refused with the new warn line, registers
+byte-unchanged across the refused write. Both PRs' pending hardware gates are closed.
+
+**Did not work:** the round's step-5 prediction. After the refusal test, stop→start (with a
+true driver-level sensor power cycle in the journal: power_off → power_on → Streaming started)
+was predicted to restore EXP_TH_L=0. It came back 0x0BB8 (3000) — the step-4a value — with
+Redis reseeded empty and no userspace write in the journal. Also found: `systemctl restart
+cinemate-autostart` cancels itself (Conflicts=getty@tty1 + the ExecStopPost console handoff
+starts getty, which kills the queued start job) — the stack silently stays down; only
+stop-then-start works. journald runs `Storage=volatile`, so only the current boot exists —
+round 8's failing-boot journal counts are unrecoverable and every boot's evidence dies at
+power-off. And libcamera's on-rig tree is dirty at the pinned SHA: colour `imx585.json` and
+`imx283.json` stripped (~4.3 KB, alsc/denoise/lux/dpc/noise/geq removed) and installed;
+`imx585_mono.json` untouched, so mono rounds are unaffected, but the Phase-3 colour arm must
+restore them first.
+
+**Why:** the threshold persistence is V4L2 control-cache replay, confirmed at source after
+the run: `imx585.c:2024` calls `__v4l2_ctrl_handler_setup()` at every stream start ("Apply
+user controls after writing the base tables"), replaying every cached control value over the
+register-table defaults; probe seeds DATASEL_TH `p_cur`/`p_new` to {0x0FFF, 0}
+(`imx585.c:1749`), so an untouched boot replays a no-op — but any threshold ever written
+persists for the module's lifetime, across cinepi-raw restarts and sensor power cycles,
+invisible to Redis. The driver deliberately zeroes VMAX/HMAX/SHR before the replay
+(`imx585.c:2019-2021`) but not the HDR controls. Two adjacent footguns surfaced while
+confirming: the control's registered *default* is `.def = 0`, i.e. p_def = {0,0}, the
+degenerate pair (only p_cur/p_new get the good seed — anything that "resets to default"
+writes {0,0}); and a write cinepi-raw refuses still lands in Redis, which then disagrees
+with the silicon until the next reseed.
+
+**Confirmed by:** worker-session raw-I2C readbacks, journal greps, and SHAs pasted verbatim
+in the round 0.1 result (campaign overseer thread, 2026-08-30); overseer source confirmation
+against `imx585.c` @ 70bdb26, which the worker's own on-Pi diff showed byte-identical to the
+DKMS build source. Scene state operator-confirmed. README fix for the prohibited-pair example
+opened as cinepi-raw PR #70 (docs-only).
