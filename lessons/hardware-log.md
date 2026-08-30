@@ -1124,3 +1124,50 @@ room, SDR-white observation, mode-bounce actions, explicit decision to spend sam
 boot). Fill-boot journals archived on-Pi (`journal-20260830-FILL-c86eae30.log`,
 `journal-20260830-FILL-a5bb782a.log`). Boot a5bb782a left FILLING and held as Phase 1's
 subject.
+
+## 2026-08-30/31 — Campaign round 2 (Phase 1): 3/3 lit 140 s restarts refill; the first dark engage comes up CLEAN; an unclassified 74.6% flat state stops the round
+
+**Tested:** Phase 1 on the held fill (boot a5bb782a, mono 16-bit linear ClearHDR, bare+lit,
+self-heal off and grep-verified at every checkpoint): three lit stop→wait-120 s→start cycles
+(journal-measured 140.1 / 143.5 / 142.2 s power-off), then one covered restart (143.4 s off,
+operator holding the cover through engage), then an uncover follow-up take. Steps 4/5 (lit
+re-entry restart, rmmod soak) NOT run — the round stopped at a pre-declared UNEXPECTED
+classification.
+
+**Worked:** the covered-restart protocol and the distribution-based verdict. The covered
+engage (engage 8) is the campaign's first genuine dark bring-up and came up **CLEAN-DARK**,
+unambiguously: 0.0023% of pixels exactly 3200 (vs 99.11% in every fill tonight), broad noise
+spread (std ≈ 111, median 3431, 96.6% within 3200±500, no dominant exact value). Take
+225844 is now the rig's clean-dark reference (a gap flagged in the round design — now
+closed by the data itself). Worker discipline: stopped at the unpredicted outcome, read
+registers/exposure before anything else, ran nothing further.
+
+**Did not work:** every persistence prediction. 3/3 lit ~140 s restarts came back FILLING
+(means 3201.3–3202.5, ≥99.1% exactly 3200) — H1a in its "vana-decay ≤ 140 s" form is dead.
+And the pre-registered uncover prediction ("flood near saturation") missed: the uncovered
+stream sat at a stable **74.6% flat field** (active-area mean 49272, std 9.5 = 0.019%;
+OB-prepend rows 0–19 decaying normally; uniq 639 / row-delta 263 = fixed-pattern noise on a
+flat mean, no scene structure — but a bare lensless sensor cannot form scene structure).
+Every readable register byte-identical to the fills (EXP_TH_H 0x0FFF, EXP_TH_L 0, WDMODE
+0x10, COMBI_EN 0x02, EXP_GAIN 0x01, HMAX 750, VMAX 4714, SHR 2732).
+
+**Why (overseer interpretation, [P], discriminators queued):** the night's data is
+parsimoniously unified by a **re-entry model**: the pedestal state does not persist across
+power cycles at all — it is *re-created at each lit engage* (flood at engage → enter) and
+was suppressed at the one dark engage. Under this model the round-1 mode-bounce "escape
+failure" was clear-then-re-enter twice, round-8's within-boot consistency is scene
+consistency, and "persistence" dissolves as a concept. The lit-vs-covered asymmetry (0/3 vs
+1/1 clean) alone is only p≈0.25 under pure stochastic clearing, so the model rests on
+replication, which is the next round. The 74.6% state is [P] a *real photometric flat
+field* — a bare sensor is a flat-field detector, SDR clips white where the 16-bit WDR
+container does not, and the distribution is signal-shaped (PRNU/FPN, no exact-value spike),
+unlike the digital-clamp fill; the discriminator (a 3-stop shutter step measured at frame
+≥ 20, expecting the signal to scale ÷8 if real and sit unchanged if clamped) is the first
+step of the prepared next round. If it does not scale, this is a genuinely new third sensor
+state and the round plan says stop.
+
+**Confirmed by:** worker session — journal-timed power cycles, off-device DNG decode with
+per-take distributions, raw-I2C readbacks in both states, and a byte-level forensic read of
+the 74.6% frames — pasted verbatim in the round 2 result (campaign overseer thread,
+2026-08-30/31); operator at the rig holding the cover through the full covered sequence.
+Rig left streaming in the unclassified 74.6% state, boot a5bb782a, engage 8, held.
