@@ -1305,3 +1305,50 @@ which of the two is untimed" [P].
 **Confirmed by:** operator recollection (in-session, after seeing the frame data described)
 + worker's frame-timeline mapping; corroborating evidence explicitly, per the worker's own
 caveat. Refines, does not change, the round 3.1 register findings or the REAL-SIGNAL verdict.
+
+## 2026-08-31 — Campaign round 3.2: a paper-diffused engage clamps (hardest pedestal measured), and an upward light transient does NOT release it
+
+**Tested:** the dose arm on boot 086ae341 (mono 16-bit linear ClearHDR, self-heal off,
+grep-verified): service stop → single sheet of white printer paper held flat over the bare
+sensor → engage under diffused light (73.0 s off, engage 6) → classify → remove diffuser on
+the running stream → full-take-sampled classification. Step 4 (final lit-restart tally) not
+run — the round hit its pre-declared STOP condition at step 3.
+
+**Worked:** the protocol and the sampling discipline (the worker sampled the entire
+post-removal take at 8 points rather than one frame, applying round 3.1's lesson that
+releases take seconds).
+
+**Did not work — two model-relevant negatives:**
+1. **Entry:** the diffused engage came up PEDESTAL — and the tightest one measured all
+   night: active area (rows 25–2199) mean exactly 3200.0, std 0.0; 99.127% of all pixels
+   exactly 3200. Entry does not need flood: it triggers under heavily attenuated uniform
+   light. The clamp-entry threshold sits below paper-diffuse level; only the dark engages
+   (2/2) have come up clean.
+2. **Release:** removing the diffuser — an upward step to the full flood that the sensor
+   was demonstrably imaging at 74.4% minutes earlier — produced NO release: flat 3200.4–
+   3201.0 across the entire 3.1 s take, still clamped ~4 minutes after removal at last
+   check. The same-boot round 3.1 release (cover→reveal) triggered ~2–3 s into the covered
+   phase. Registers byte-identical to every fill reading, again.
+
+**Why (overseer read, [P], discriminator queued as round 3.3):** the release mechanism is
+direction-sensitive — the documented release happened under sustained cover (dark side);
+an upward diffuse→flood step does not release within minutes. The historical "flash a
+light at it" escape is hereby demoted to unverified (never instrumented; every instrumented
+release so far involved a dark phase). Two candidate readings of the failed release, per
+the worker, left open: (a) a diffused-origin clamp is a deeper state resistant to the
+round 3.1 lever, or (b) clamps are one kind and only the transient's direction/size
+matters (paper transmits substantially, so diffuser-off is a small upward step). Round 3.3
+discriminates by applying the proven cover→reveal lever to this very clamp. The worker
+also correctly flagged, and did not act on, the operator's known manual technique
+("shutter angle to 1 flips it") — scripted for 3.3 as a second, software-only release
+lever with per-frame capture and SHR silicon verification (debt 17 guards).
+
+**Product note:** entry is worse than hoped (any uniform light at engage clamps — not just
+flood), but every historically clean verification engaged on a *structured* scene; whether
+scene structure (not just level) protects the engage is now the load-bearing open entry
+question for real shoots, queued for a daylight arm with a lens.
+
+**Confirmed by:** worker session (full-take per-frame sampling, distribution verdicts,
+raw-I2C readbacks in the clamped state), pasted verbatim in the round 3.2 result; operator
+at the rig (diffuser placement/removal, confirmed in-session). Takes 000002 (diffused
+engage) and 000117 (post-removal, 8 frames spanning the take) archived.
