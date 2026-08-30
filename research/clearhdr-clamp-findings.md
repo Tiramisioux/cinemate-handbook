@@ -149,7 +149,102 @@ commits verified first-hand in a local clone with full history)
 
 ### Q3 — Community corroboration (forums, GitHub issues, firmware changelogs)
 
-*(pending)*
+*(complete — researched 2026-08-30/31. Environment caveat: the egress proxy blocks nearly every
+forum domain (forums.raspberrypi.com, cloudynights.com, stargazerslounge.com, bbs.zwoastro.com,
+ipcamtalk.com, forums.sharpcap.co.uk, forum.arducam.com, astrobin, NVIDIA developer forums,
+lore.kernel.org, patchwork.linuxtv.org, web.archive.org…); GitHub was fully reachable. Forum
+items below are search-snippet evidence, honestly labelled. Independence caveat: the strongest
+[doc] items live in the upstream repo of our own driver lineage, so they are corroboration of
+the AppNote and of register-caused pedestal states, not independent discovery of our bug.)*
+
+**Ranked result: the exact fingerprint — lit-start exact-pedestal clamp, dark-start immunity,
+one-way in-stream release by short-integration command or covering — is unreported anywhere
+reachable. The nearest cousins: the driver lineage's own three register-caused pedestal
+states; an independent company (Kurokesu) shipping this sensor+driver family with a written
+"bright parts can render black" Clear HDR warning; and the ToupTek IMX585 OEM family needing
+camera-firmware revisions to fix broken HDR output.**
+
+#### [doc]
+
+1. **Prohibited EXP_TH order → pedestal-only** — upstream commit 954a52a (2026-05-13), fetched
+   and quoted in full under Q1 item 1. *"Symptom: enable ClearHDR (wide_dynamic_range=1) on a
+   4K all-pixel mode and the output is a flat solid colour at BLC level regardless of scene."*
+   <https://github.com/will127534/imx585-v4l2-driver/commit/954a52a>
+2. **Out-of-spec ACMP defaults → all output clamped to black level** — commit 1ac3cec:
+   *"causing the sensor to enter a degenerate state where all pixel output was clamped to
+   black level."* <https://github.com/will127534/imx585-v4l2-driver/commit/1ac3cec>
+3. **"Write sane register defaults at ClearHDR stream start"** — commit 1eff18f: writes
+   spec-valid combine defaults in `common_clearHDR_mode` *"so the sensor always starts in a
+   valid state regardless of V4L2 control init order"*, and fixes a menu off-by-one that could
+   write *"the 'Setting Prohibited' value 8"* to the blender register. The lineage's own
+   history is one long fight with combine-stage validity at stream start.
+   <https://github.com/will127534/imx585-v4l2-driver/commit/1eff18f>
+4. **Kurokesu (independent camera company) ships this sensor+driver family with a written
+   Clear HDR warning** — Kurokesu/imx585-rpi-driver README, commit c29030e (2026-08-28):
+   *"Clear HDR is experimental and not yet tuned. Bright parts of a scene can render black in
+   both 16-bit and 12-bit output."* No start-condition or release-trigger detail. Their Jetson
+   driver has Clear HDR only *"planned"*.
+   <https://github.com/Kurokesu/imx585-rpi-driver/commit/c29030e>
+5. **ToupTek IMX585 OEM family (ATR585C/M + Altair/OGMA/Meade rebrands) shipped camera-firmware
+   fixes specifically for broken HDR mode** (snippet only — forums.sharpcap.co.uk blocked):
+   FPGA firmware 4.43 (cooled colour) / 4.49 (mono) / 5.6 (uncooled) + driver dated
+   2025-01-21; per snippets SharpCap's developer obtained unpublished firmware from ToupTek
+   and *"with this update the HDR seems fixed"* (threads t=8307 "IMX585 Firmware updates for
+   ToupTek cameras", t=8289).
+
+#### [anecdote] (ranked by closeness of match)
+
+1. **Raspberry Pi Forums t=388520, "With ClearHDR enabled on IMX585, part of the picture turns
+   pink"** (2025-06-03; RPi 5 + IMX585 Clear HDR, raw DNG; snippet only — domain blocked): a
+   luminance band renders pink; replies note *"problems when some of the colour channels
+   saturate, but not others, and the way the sensor is combining the low and high gain images
+   seems to be incorrect"*, with raw files implicating the sensor. Match: HDR-only ✓, on-chip
+   HG/LG combine misbehaving around a data-selection threshold ✓, sensor-level ✓; black clamp
+   ✗, start-condition ✗, release ✗. The closest public sibling of our mechanism family.
+2. **SharpCap forums t=8289, ToupTek ATR585C HDR breakage** (~2024-11; snippet only): *"HDR
+   mode was doing weird things… invalid results in the sensor analysis and really bad images
+   when the brightness level is low"* — fixed by the firmware in [doc] 5. Match: HDR-only ✓,
+   light-level-dependent ✓ (inverted polarity); pedestal clamp ✗.
+3. **GitHub indilib/indi-3rdparty #1133, "Touptek 585-based cameras still disfunctional"**
+   (2025-08-07, Touptek 585C, libindi 2.1.4; fetched): *"Images taken with HDR are either
+   good, or half-downloaded, or have color artifacts"*; hangs. Related #1114 (ATR585M hangs on
+   Mono16 after firmware update). Match: IMX585 HDR-mode instability ✓; black-at-start ✗.
+   <https://github.com/indilib/indi-3rdparty/issues/1133>
+4. **Cloudy Nights topic 945637 p.6, QHY miniCAM8 (IMX585)** (snippet only): after a 2025
+   driver/SDK update, *"the only way to take images with correct gain and offset is to keep
+   the camera in 'Full Resolution' mode rather than HDR mode"*. Match: HDR-only settings
+   dysfunction ✓; black frames ✗.
+5. **Cloudy Nights topics 918015 / 900797 (ToupTek 585CP / "HDR mode on Touptek Camera")**
+   (snippets only): *"HDR mode doesn't work properly"*; users flashing FPGA v4.35 to get HDR
+   working; *"the Touptek 585 ignores the set offset in HDR mode and uses 512 no matter
+   what you set."* Match: HDR-only ✓, firmware-fix trail ✓; black-at-start ✗.
+6. **will127534/StarlightEye #26 "Clear HDR mode"** (2025-09-29, open, zero replies; fetched):
+   only asks how to enable Clear HDR from picamera2 — included as evidence of how thin the
+   direct-Clear-HDR user base is. <https://github.com/will127534/StarlightEye/issues/26>
+
+**Explicit nothing-found:** GitHub-wide issue searches `imx585 hdr black` (0), `imx585 "no
+image"` (2 irrelevant), `"wide_dynamic_range" imx585` (0), `imx678 hdr` (1 irrelevant); all 8
+issues in will127534/imx585-v4l2-driver, 3 in Kurokesu, 3 in INNO-MAKER/CAM-IMX585, 0 in
+Apertar-D1, 3 imx585 issues in raspberrypi/libcamera (format-related) enumerated — none
+matches; nothing on ZWO forum, Reddit, EEVblog, Khadas, or in Chinese (IMX585 HDR 黑屏) /
+Japanese (IMX585 HDR 真っ黒) searches. Full query log preserved in the session record.
+
+#### [inference]
+
+1. External evidence establishes at least three *register-caused* ways the IMX585 Clear HDR
+   combine emits exactly the frame-wide black pedestal — proving a reachable "degenerate state
+   whose output is precisely BLC pedestal", the same visual signature as ours. Every
+   documented case is static and register-caused; ours is register-invisible and
+   light-history-dependent. That arm appears genuinely unreported.
+2. Kurokesu's "bright parts of a scene can render black" is the only independent-company field
+   observation of content-dependent black rendering in Clear HDR; a uniformly bright scene
+   under that description would render fully black — possibly a partial, uncharacterized
+   sighting of our lit-start clamp.
+3. The community silence is plausibly a population artifact: ZWO/Player One/QHY expose
+   dual-gain HDR through their own FPGA/SDK paths (with their own HDR firmware bugs), not raw
+   on-chip Clear HDR registers; the population driving Clear HDR directly is essentially the
+   small Pi-driver crowd — and astro users start their streams in darkness, precisely the arm
+   of the fingerprint where the bug is invisible.
 
 ### Q4 — Driver-implementation comparison (Clear HDR enable sequencing)
 
@@ -233,6 +328,19 @@ From Q1:
   reproduce exact-pedestal output that a subsequent short-SHR command releases in ~0.6 s —
   the same release signature would tie both black-frame conditions to one internal state
   machine.
+
+From Q3:
+- If Kurokesu's warning describes our latch rather than static threshold mistuning, then a
+  half-covered scene at lit stream start → the lit region clamps to pedestal while the covered
+  region does not, reproducing "bright parts render black" spatially within one frame (this is
+  also the campaign's open structured-scene question, sharpened).
+- If the AppNote §4.2 "blend-off" state is architecturally distinct (EXP_TH_H=EXP_TH_L=0x1000
+  routes through the EXP_BK weighted blend), then pre-setting both thresholds to 0x1000 before
+  a lit stream start → no clamp; a clamp there would prove the latch sits below the
+  selection/blend fork and is a new, reportable finding.
+- If ToupTek's FPGA firmware fixes addressed HDR re-initialization rather than tuning, then
+  toggling COMBI_EN (0x3024) 0x02→0x00→0x02 mid-stream on a lit clamped stream → releases or
+  re-arms the clamp, mirroring what a firmware-side combine reinit would do.
 
 ---
 
