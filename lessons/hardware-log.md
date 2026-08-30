@@ -1213,3 +1213,67 @@ contamination stays excluded.
 **Confirmed by:** worker session (journal post-mortem of boot -1, register sweep, baseline
 take decode, gpio_input.py source check), pasted verbatim in the round 3 result; operator
 physically restored the rig and confirmed it back.
+
+## 2026-08-31 — Campaign round 3.1: the lever confirmed cross-boot, the "74.6% state" classified as the HEALTHY sensor, and a frame-resolved LIVE ESCAPE captured with zero register change
+
+**Tested:** the full lever cycle on one boot (086ae341, mono 16-bit linear ClearHDR,
+bare+lit, self-heal off and grep-verified at every checkpoint): covered restart → uncover →
+exposure-response discriminator → lit restart; plus an operator-directed redo of the
+light-response step as a 10 s take with live cover/reveal. Operator waived the scripted
+120 s idle waits (actual off-durations 62.0 / 66.3 s, journal-measured and reported).
+
+**Worked — the model's every prediction:**
+- Covered engage → CLEAN-DARK again (0.026% exactly-3200 vs 99.11% in fills): covered-clean
+  is now **2/2 cross-boot**.
+- Uncover (no restart) → the high flat state **reproduced on demand**: 74.32% vs the
+  original 74.62%, distribution shape matching, active-area flatness even tighter (std 7.9).
+- Exposure discriminator → **REAL SIGNAL, decisive**. The commanded 22.5° snapped to 1° in
+  cinemate's live step table (~180× cut, not ~8× — method note: scripted shutter values must
+  come from the step table); delivery verified at the silicon first (SHR 4700 ≈ predicted
+  4701 for 1° at VMAX 4714); excess-over-pedestal collapsed 97.7%. A clamp would not move.
+  **The ~74% state is the healthy sensor imaging a lensless flat field** — formally closed.
+- Lit fresh engage → pedestal, twice more this round (a sequencing slip ran step E's test
+  early; disclosed, and it answered the prediction anyway): **lit fresh engages are now 5/5
+  pedestal tonight; the healthy state has ONLY ever been reached by an in-stream light
+  transition on a clean or clamped stream — never by a lit engage.**
+
+**The addendum finding (operator-directed):** a 210-frame, 10 s take capturing the full
+pedestal→real-signal escape inside one engage, zero restarts, zero register writes: frames
+0–66 pedestal (3201–3205) · abrupt onset at frame 67 · ~31-frame quasi-stable plateau at
+4200–4350 (6.4–6.7% — the covered-dark REAL level from step A) · a second linear rise ·
+then a near-exponential 4-frame jump 9547→48744 (~190 ms) · rock-stable at 74.37% for the
+remaining ~4.6 s, no re-clamp. Post-escape registers byte-identical to every fill reading
+(EXP_TH_H 0x0FFF, EXP_TH_L 0, WDMODE 0x10, COMBI_EN 0x02, EXP_GAIN 0x01, SHR 2732, VMAX
+4714). This closes the instability report's §6 gap (register diff across an escape): **no
+readable register changes across a live multi-second escape** — the strongest
+combine/selection-stage-locus evidence yet. Overseer reading, [P]: the plateau sitting at
+the covered-dark real level suggests the clamp released at/under the COVER (the downward
+transient), with everything after tracking the operator's reveal; the hand motion was
+untimed, so light-curve vs internal-dynamic cannot be separated from DNG data alone.
+
+**Did not work / new defect:** restoring the shutter mid-stream desynced cache from
+silicon — `set shutter a 180` left status reporting 180.0°/23.8 ms while raw I2C read SHR
+2356 (≈28.3 ms) twice, and the PIXELS followed the silicon (75.09% > 74.32%, consistent
+with the longer real exposure). Self-corrected at the next engage (SHR 2732). A shutter-side
+cache/silicon desync in the same defect class as the #69 threshold key-swap — logged as new
+campaign debt 17, desk investigation queued (cinemate set_shutter_a → Redis → cinepi-raw →
+driver SHR path). Step D's original hand-cover cross-check was spent by the sequencing slip
+and superseded by the addendum capture.
+
+**Why (working model M, replacing H1a/H1b/H1c):** the ClearHDR combine/selection stage has
+a light-history-dependent clamp state, set at engage: **engage under flood → clamped
+pedestal (5/5); engage under dark → normal (2/2); once streaming, a large light transient
+releases the clamp (n=1 instrumented, historical hand-cover/flash escapes consistent), and
+release is one-way within a stream** (locked stable after). Nothing I2C-readable
+distinguishes the states — now proven across a live transition. Persistence was never real:
+every "surviving" power cycle was re-entry at the next lit engage. Open axes: is entry
+thresholded at flood or any-light (dose arm — next round); which direction of transient
+releases (dark documented, bright historical-only); does a structured scene at engage
+protect (product severity).
+
+**Confirmed by:** worker session — per-frame DNG traces, distribution verdicts against the
+clean-dark reference (225844), raw-I2C SHR delivery checks, register sweeps in both states —
+pasted verbatim in the round 3.1 result; operator at the rig (cover/reveal execution,
+scene confirmation, and directing the addendum take). Key artifacts: takes 233731
+(covered-clean), 233829 (reproduced healthy flat), 234032 (1° discriminator), 235058
+(210-frame live escape; 86 frames archived off-device).
