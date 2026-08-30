@@ -1047,3 +1047,35 @@ as previously established.
 round 0.2 result (campaign overseer thread, 2026-08-30); overseer source citations against
 `imx585.c` @ 70bdb26. Related: cinepi-raw PR #70 (README prohibited-pair example) merged
 2026-08-30 — campaign debt 3 closed.
+
+## 2026-08-30 — Campaign round 1, sample 0 aborted: mid-round drive reformat destroyed the take and burned the boot
+
+**Tested:** first sample of the first-engage entry-rate series (bare scene, mono 16-bit
+linear ClearHDR, sensor_mode 4) on boot d35e6874 (warm, carried over from round 0.2). Take
+`CINEPI_26-08-30_220759_F20_C00001_cam0` recorded cleanly (67 frames, drop_frame=0) on the
+NTFS drive.
+
+**Worked:** the non-perturbing protocol held — no shutter step, no threshold write, no
+escape-trigger action all round; registers stayed at the driver-default pair {0x0FFF, 0}
+through everything including the storage-triggered relaunch; the self-heal grep stayed empty
+across all three engages (third consecutive #176 gate datapoint, now including a
+storage-event relaunch, not just boots and manual restarts).
+
+**Did not work:** no verdict. The operator reformatted /media/RAW from NTFS to exFAT while
+the DNG was being copied off-device; the take was destroyed before any bytes left the rig.
+The remount also relaunched cinepi-raw (engage 3 at t≈554 s), so the boot is burned for
+first-engage purposes. Sample 0 dropped (overseer decision, per worker recommendation); the
+series restarts at cold sample 1 on exFAT — accepted as a declared environment change, since
+storage is the measurement instrument, not the system under test (the rec path is
+Redis-only and never touches the sensor stream).
+
+**Why:** a method note with teeth for later journal archaeology: **storage events add
+engages within a boot** (remount → storage pre-roll → cinepi-raw relaunch → "Streaming
+started"). An engage count on any fill boot must be read against storage pre-roll/remount
+lines before interpreting it as boot behaviour. Also one small datapoint: a ~3 s, ~355 MB/s
+take completed with drop_frame=0 on NTFS fuseblk — consistent with the known stall ceiling
+being about sustained writes, not short bursts.
+
+**Confirmed by:** worker journal excerpts and mount/ls output pasted verbatim in the round 1
+partial result (campaign overseer thread, 2026-08-30); the reformat operator-confirmed
+in-session.
