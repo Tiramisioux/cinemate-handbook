@@ -1352,3 +1352,56 @@ question for real shoots, queued for a daylight arm with a lens.
 raw-I2C readbacks in the clamped state), pasted verbatim in the round 3.2 result; operator
 at the rig (diffuser placement/removal, confirmed in-session). Takes 000002 (diffused
 engage) and 000117 (post-removal, 8 frames spanning the take) archived.
+
+## 2026-08-31 — Campaign round 3.3 (night closer): the shutter-excursion lever RELEASES during the 1° hold (~0.6 s), the cover lever is per-attempt stochastic, and debt 17 is deterministic
+
+**Tested:** on the live diffused-origin clamp (boot 086ae341): a 10 s control take; the
+proven cover/reveal lever; a re-established clamp; then the shutter-excursion lever fully
+instrumented — commands scripted inside one SSH session with remote sleeps after a first
+attempt was contaminated by connection-overhead timing (disclosed by the worker, caught
+live by the operator). Mid-round environment change recorded: shutter switched to FREE STEP
+mode (cinemate restart required → an extra engage), commanded values land exact from then on.
+
+**Worked — the decisive result:** take 002129 (engage 9, freshly confirmed clamped for its
+first 52 frames): `set shutter a 1` at T+2.04 s, SHR=4700 verified at the silicon → onset at
+frame 56 (~13 frames after the command — matching the documented ~12-frame settling lag) →
+a rock-steady plateau at 4205–4238 for the whole hold — which is NOT pedestal but matches,
+almost to the digit, the independently measured real-signal-at-1° level (round 3.1's
+discriminator ~4200–4250, and a third accidental measurement this round) → restore at
+T+5.13 s → jump to 76.87% ~16 frames later → locked. **Release happened DURING the 1° hold,
+within ~0.6 s of delivery — not at the restore.** The pre-registered confound (released+
+short-exposure reads near-pedestal) was defeated by the plateau sitting at the known
+real-at-1° level while the same take's own first 52 frames showed the true
+exposure-independent clamp floor. One clean instrumented confirmation, plus one
+strongly-suspected release during an accidental unrecorded ~78 s hold at 1° on the prior
+engage (inference, flagged as such).
+
+**Also:** the cover/reveal lever released on its second attempt of the night (engage 7:
+pedestal → onset frame 39 → ~1.9 s plateau at ~11% → jump → locked ~76.5%) after failing
+on its first (engage 6, two small non-sustained blips) — the lever is **per-attempt
+stochastic**, 2/3 across the night, resolving round 3.2's (a)/(b) question as (b):
+direction/light-history sensitivity, not a "deeper" clamp variant. Control take: no
+spontaneous release ≥13 min. Lit engages finished the night **7/7 pedestal**; covered
+engages 2/2 clean.
+
+**Did not work:** debt 17 recurred on every restore — SHR reads 2356–2358 instead of the
+expected 2732, a **deterministic 374–376-line offset, 3/3 observations** — this is a
+systematic conversion bug somewhere in the set-shutter restore path, not noise, and it
+must be fixed BEFORE any auto-kick mitigation ships (the mitigation's own restore would
+mis-expose every take it touches). Desk trace queued (cinemate set_shutter_a → Redis →
+cinepi-raw → driver SHR).
+
+**Why (model M, end-of-night form):** clamp is set at engage by uniform light (any level
+above dark: flood 7/7 + diffuse 1/1; dark clean 2/2); releases via stimulus while
+streaming — a large downward light transient (stochastic per attempt, seconds-scale) or a
+commanded deep shutter excursion (fast, ~0.6 s, 1/1 instrumented); release is one-way per
+stream; no I2C-readable register distinguishes any of it. Whether the two levers share one
+physical pathway (big integration-change stimulus) or differ is open — the shutter lever's
+speed difference is recorded as inference only. Product-relevant open question unchanged:
+does a structured scene protect the engage (daylight arm with a lens).
+
+**Confirmed by:** worker session (per-frame traces on every take, SHR silicon verification
+after each shutter command, scripted-timing redo methodology), pasted verbatim in the round
+3.3 result; operator at the rig (cover attempts, the live catch of the timing miss, the
+free-step mode change). Takes 000945/001048 (cover attempts), 001441/001701 (contaminated
+step-4 + accidental-hold evidence), 002129 (the decisive instrumented release) all retained.
