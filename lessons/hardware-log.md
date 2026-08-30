@@ -1171,3 +1171,45 @@ per-take distributions, raw-I2C readbacks in both states, and a byte-level foren
 the 74.6% frames — pasted verbatim in the round 2 result (campaign overseer thread,
 2026-08-30/31); operator at the rig holding the cover through the full covered sequence.
 Rig left streaming in the unclassified 74.6% state, boot a5bb782a, engage 8, held.
+
+## 2026-08-31 — Campaign round 3 stopped at baseline: ungraceful power loss killed the target boot; the replacement boot is the third consecutive lit first-engage pedestal
+
+**Tested:** round 3 (classify the 74.6% state + replicate the light lever) against boot
+a5bb782a — which no longer existed. The rig dropped off the network between rounds; boot
+-1's journal ends abruptly at t=1965.8 with routine housekeeping and NO shutdown marker
+(every commanded stop tonight logged "Graceful shutdown initiated" + power_off), so the
+boot died to a power interruption, not a command. The worker ran only the boot-agnostic
+read-only step 0 plus the baseline take on the new boot (086ae341), then stopped rather
+than retarget the discriminator at a different state than it was calibrated for.
+
+**Worked:** journald persistence paid for itself — the dead boot's full journal survived
+for the post-mortem. The full register sweep on the new boot read EXP_BK (0x00), ACMP1/2
+(0x06/0x04), CCMP1/2_EXP (500/11500 — the driver's grad_thresh defaults, inert in 16-bit
+linear), ADDMODE (0x00) and DIGITAL_CLAMP (0x00) for the first time this campaign — all
+nominal, alongside the usual byte-correct set (VMAX 4712 vs 4714 = normal VBLANK ±2-line
+adjust). Worker self-resolved a false lead before reporting it: five "Triple Click: reboot"
+journal lines are gpio_input.py:77's *startup announcement* of the configured action, one
+per service start, timestamps matching the round-1/2 restart cycles — a startup log line is
+not an event log (method note worth keeping).
+
+**Did not work:** the 74.6% state is gone unmeasured — its exposure-response classification
+never ran; it remains [P] real-flat-field on distribution shape alone (frames from take
+225950 archived off-device for re-analysis). And the new boot's baseline take is an
+ordinary 4.88% pedestal fill (mean 3201.49, 99%+ exactly 3200) at first engage: lit boots
+tonight are now 3/3 entering the pedestal — 2 confirmed cold + 1 probable-cold (the
+predecessor died to a power cut, so the replacement is almost certainly a true power-on,
+but that is [P], not [C]).
+
+**Why:** the crash cause is unresolved (power interruption during a night of operator
+power-cycling; cable/PSU seating to be checked) and is treated as environment, not signal.
+The campaign consequence is nil for the re-entry model — it predicts exactly what the new
+boot shows — and the restructured round 3.1 runs the full lever cycle on the fresh fill:
+covered restart (predict clean-dark, n=2 cross-boot), uncover (predict deliberate
+reproduction of the high flat state, level free / shape predicted), exposure-response
+classification of the reproduced state, then a lit restart (predict re-entry). No shutter
+or gain step touches the fill itself before the covered step — escape-trigger
+contamination stays excluded.
+
+**Confirmed by:** worker session (journal post-mortem of boot -1, register sweep, baseline
+take decode, gpio_input.py source check), pasted verbatim in the round 3 result; operator
+physically restored the rig and confirmed it back.
