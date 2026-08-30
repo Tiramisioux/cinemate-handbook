@@ -355,7 +355,17 @@ Japanese (IMX585 HDR 真っ黒) searches. Full query log preserved in the sessio
 
 ### Q4 — Driver-implementation comparison (Clear HDR enable sequencing)
 
-*(in progress — external-driver comparison pending; our-stack baseline recorded below.)*
+*(complete — researched 2026-08-30/31. Our-stack baseline read first-hand by the overseer;
+external drivers read from local clones by the research agent, with the youjunl and FRAMOS
+key claims re-verified line-by-line by the overseer.)*
+
+**Ranked result: no publicly visible driver implements ANY deliberate startup workaround —
+no dummy/masked first frames, no forced short-exposure kick, no HDR-enable-after-stream, no
+double start, no HDR-specific settle delay. Every Clear HDR implementation writes the full
+HDR configuration in standby and releases standby last. If the lit-start clamp is intrinsic
+silicon behaviour, nobody upstream has knowingly coded around it. The only workaround-shaped
+text anywhere is INNO-MAKER's user advice "if the image goes black … reduce --shutter" —
+operationally the same move as our reliable SHR-kick release.**
 
 #### Baseline: our own driver's engage sequence (read from source, first-hand)
 
@@ -405,6 +415,57 @@ thresholds before WDMODE, a wait-N-frames rule, a forced short-exposure first fr
 masked-frame register — is a candidate fix template. Note also XMSTA-before-standby-release
 with zero inter-write delay; if Sony's canonical start sequence (standby release → wait →
 master start) differs, that is a concrete, testable deviation.
+
+#### External comparison ([doc] unless noted; every driver read from source in a local clone)
+
+**Sequencing table across every reachable implementation:**
+
+| Driver | Clear HDR | EXP_TH written | HDR regs vs stream | Stream-on order | Delay | Dummy frames |
+|---|---|---|---|---|---|---|
+| will127534 main @ 70bdb26 (= our rig) | yes | 0x0FFF / 0 (in table) | all in standby | XMSTA=0 → 0x3000=0 | 25 ms after | no |
+| will127534 old lineage (via Cine-Fox fork @ e82cf36, 2025-10-09) | yes | via ctrl default {512,1024} = the Prohibited pair | all in standby | same | 25 ms after | no |
+| Kurokesu/imx585-rpi-driver @ cdd0214 (v0.2.0) | yes | 0x0FFF / 0 | all in standby | same | 25 ms after | no |
+| FRAMOS fr_imx585 (l4t-r36.4.4) | yes | **never** (controls only → sensor default 0x1000/0x1000) | all in standby | **0x3000=0 → 40 ms → XMSTA** | between | no |
+| youjunl/imx586-v4l2-driver @ e71e517 | yes | **0x0FFF / 512** + BK=0, written procedurally just before stream-on (imx586.c:1514–1519, overseer-verified) | all in standby | 0x3000=0 only (**no XMSTA write at all**) | 25 ms after | no |
+| mainline imx678 (torvalds @ 2026-08-30) | no (SDR only) | – | – | 0x3000=0 → 25 ms → XMSTA | between | no |
+| Rockchip BSP imx678 | DOL only | – | in standby (XMSTA in table) | 0x3000=0 last | – | no |
+| OpenIPC/waybeam cv610 imx662 | no (deferred: *"Bring linear up first. Add Clear-HDR … later"*) | – | – | 0x3000=0 → XMSTA | 2 ms after | no |
+| pauliustumas/imx662 | no | – | – | 0x3000=0 → 30 ms → XMSTA | between | no |
+| VC MIPI IMX585 (vc_mipi_nvidia) | no (SDR only) | – | closed MCU firmware | n/a | – | unknown |
+| Kurokesu/imx585-jetson-driver | no (SDR only) | – | – | XMSTA → 0x3000=0 | after | no |
+
+Load-bearing observations:
+
+1. **The old lineage shipped the Prohibited pair as its default** — Cine-Fox/imx585-v4l2-driver
+   @ e82cf36 (2025-10-09): `common_clearHDR_mode` ends at EXP_GAIN with **no EXP_TH/EXP_BK/ACMP
+   writes at all**, and `hdr_thresh_def[2] = { 512, 1024 }` applied via the control handler.
+   This externally confirms the instability report's finding about the golden-era 6.12.y
+   driver, from an independent fork snapshot.
+2. **FRAMOS is the only other real Clear HDR implementation** and diverges from us at exactly
+   the engage moment: standby release first, a 40 ms gap, then master start — the reverse
+   pairing of ours — and thresholds left at the sensor's power-on 0x1000/0x1000 (the config
+   commit be3cb94 measured as near-BLC). No EXP_TH/EXP_BK/EXP_GAIN in any FRAMOS table; no
+   HDR-quirk comments.
+3. **youjunl's independent early driver** writes a *nonzero* low threshold (TH_L=512) and
+   never touches XMSTA. No workarounds, no quirk comments.
+4. **Mainline direction is retreat, not workaround**: Will Whang's `upstream_dev_stripdown`
+   branch (@ cecfe17, fetched) removes Clear HDR entirely — only WDMODE=0x00 remains — and the
+   v3 mainline submission dropped Clear HDR + HCG/LCG after review (snippet-corroborated). The
+   sibling story matches: mainline imx678 is SDR-only, Rockchip is DOL-only, OpenIPC defers
+   Clear HDR explicitly, VC MIPI hides init in closed MCU firmware.
+5. **Nothing found**: no `soho-enterprise` fork exists (full fork list: Kurokesu, BaconWaffle,
+   Cine-Fox, con-maykr, daleghent, darkdragonsastro, Interferometry, NathanHowell,
+   Tiramisioux, VoeGalore); Leopard Imaging / e-con / THine Clear HDR driver source is not
+   public; GitHub-wide code searches for `COMBI_EN`, `"0x36d0" imx585`, `imx585_cmos` return
+   nothing beyond the repos above (queries preserved in session record).
+
+`[inference]` — the real divergences available to test are exactly two: (a) XMSTA-vs-standby
+ordering and gap at engage (three distinct arrangements ship: ours, FRAMOS's, youjunl's), and
+(b) EXP_TH policy at engage (0x0FFF/0 vs 0x0FFF/512 vs untouched 0x1000/0x1000 vs prohibited
+{512,1024}). Both are cheap A/B experiments on our rig. And INNO-MAKER's documented recovery
+("if the image goes black, suspect the shutter is too large first — reduce --shutter … to
+recover") shows the vendor ecosystem's only public cure for black Clear HDR frames is an
+integration-time cut — the same lever as our deterministic release, packaged as user advice.
 
 ### Q5 — Silicon-level plausibility (patents, ISSCC/IISW papers)
 
@@ -463,6 +524,17 @@ From Q2:
   mechanism, then a lit engage on a half-flooded/half-dark scene → only the lit half sits at
   exactly the pedestal while the dark half shows normal read noise (per-pixel data-selection
   verdict), whereas a fully global latch predicts the dark half clamps too.
+
+From Q4:
+- If FRAMOS's engage arrangement (0x3000=0 → 40 ms → XMSTA=0) matters, then swapping our
+  driver to standby-release-first with a ≥40 ms gap before XMSTA → lit starts come up with
+  signal; if they still clamp, the XMSTA/standby ordering is exonerated.
+- If youjunl's nonzero low threshold avoids the clamp, then writing EXP_TH_L=512 instead of 0
+  before standby release → lit starts produce non-pedestal output from frame 1.
+- If INNO-MAKER's shutter rule generalizes to a fix template, then baking an "integration
+  kick" into enable_streams — program SHR to the Clear HDR minimum (16 lines) for the first
+  frame after master start, restore the requested exposure a frame later — → lit starts
+  recover within ~2 frames instead of never, matching the ~0.6 s commanded-release timing.
 
 ---
 
