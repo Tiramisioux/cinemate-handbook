@@ -469,7 +469,117 @@ integration-time cut — the same lever as our deterministic release, packaged a
 
 ### Q5 — Silicon-level plausibility (patents, ISSCC/IISW papers)
 
-*(pending)*
+*(complete — researched 2026-08-30/31. **Severe access caveat**: every patent database
+(Google Patents, Espacenet, USPTO full-text, Justia, FPO, Lens), every publisher (IEEE,
+arXiv, PMC, MDPI), Sony's site, and Image Sensors World were egress-blocked. **Every patent
+number and paper detail below is search-snippet evidence only — numbers/titles surfaced in
+search results, never confirmed by fetching the patent itself.** Treat each as a pointer to
+re-verify from an unproxied machine, not as an established citation. The [doc] lane is
+GitHub-only material.)*
+
+#### [doc]
+
+1. The driver-anchored facts underpinning this section's reasoning are recorded in Q1 items
+   1–7 (three configuration routes into an all-pixels-at-BLC combiner state; OB rows latching
+   at HG saturation in Clear HDR; the EXP_GAIN sum window; DIGITAL_CLAMP written 0 at every
+   stream start in both SDR and HDR).
+2. **The silicon has an OB-referenced digital-clamp block with a row pointer that tracks
+   binning.** Kurokesu/imx585-jetson-driver `imx585_mode_tbls.h`: `IMX585_REG_DIGITAL_CLAMP
+   0x3458` ("/* Disable digital clamp */", 0x00 in normal modes) and `IMX585_REG_DIG_CLP_VSTART
+   0x30D5` = 4 (all-pixel) / 2 (binned) — an OB-row start pointer for an on-chip digital clamp.
+   (Our driver also writes 0x30D5 per-mode and DIGITAL_CLAMP=0 each start.)
+3. **Register-family identity across Starvis 2** (mainline imx678.c fragment; also Q2 item 6)
+   — silicon-level findings on siblings transfer to the IMX585.
+
+#### [anecdote] — snippet-only secondary sources (none fetched; all labelled)
+
+- **Sony official** (sony-semicon feature 2022012801 + security tech page): Clear HDR
+  *"records images simultaneously with differences only in gain… then synthesized"*; 88 dB
+  single exposure. No internals published.
+- **Ximea / FastCompression Pregius-S dual-ADC pages**: two 12-bit readouts at different gains
+  merged to 16-bit; gradation compression is a PWL knee curve whose *"knee points come from
+  Low gain and High gain values"*; in built-in combination mode *"low gain lines and high gain
+  lines are combined and output, with the number of output lines halved."*
+- **LUCID IMX490 tech brief**: four gain/sub-pixel channels *"combined on-sensor into a single
+  linear 24-bit HDR value"*; *"incorrectly setting the HDR Exposure Time and Gain of each
+  channel can cause HDR artifacts… and HDR output which does not use the full 24-bit output
+  range"* — an OEM documenting Sony on-chip synthesis degenerating under bad channel
+  gain/exposure relationships.
+- **ToupTek ATR585 (IMX585) HDR mode** (Cloudy Nights topic 900797 era): camera firmware in
+  HDR mode *"ignore[s] user-set offset values… defaulting to a fixed offset of 512… to ensure
+  consistent merging of these two gain channels"* — an integrator pinning the black-level
+  relationship the merge depends on.
+- **Patents (numbers from snippets only — NOT verified by fetch):**
+  - *US9445019* "Solid-state image sensor and image pickup apparatus" (Sony-attributed by the
+    search summary): combine rule — high-sensitivity signal used below a first threshold,
+    low-sensitivity above a second — the EXP_TH_H/EXP_TH_L architecture in patent form.
+  - *US9402039B2* (OmniVision) per-pixel digital HG/LG selection; *US9386240B1*
+    "Compensation for dual conversion gain HDR sensor": ADC *"sequentially receive[s] a first
+    reset signal, a second reset signal, a high gain image signal, and a low gain image
+    signal, in that order"* — DCG readout depends on reference samples taken at defined times.
+  - *US20140152844A1* "Black level calibration methods for image sensors": OB data *"can be
+    corrupted if light at high intensity impinges upon active pixels near the optically black
+    pixels… due to leakage and/or cross talk"*; related text: an iterative process *"enables
+    the black clamping feedback loop to accurately converge… and prevents transients from
+    corrupting the black reference level."*
+  - *US7551212* "Image pickup apparatus for clamping optical black level to a predetermined
+    level": *"preventing blacking of an image occurring due to blooming and capable of
+    restoring an image to a normal image at a high speed… detecting abnormalities in the
+    optical black level and clamping to a first target value (during normal times)… or a
+    second target value (during abnormal times)."* Whole-image blackout via a corrupted OB
+    clamp, plus explicit abnormality-detection/recovery logic, is patented prior art.
+  - *US8648946*: black-level regulator with *"a frame integration average holding unit…
+    updating when image pickup conditions change"* — held clamp state refreshed on condition
+    changes.
+  - **"Black sun" family** (incl. KR20060087130A): oversaturation corrupts the reset/reference
+    sample so saturated pixels read as *black*; sensors ship dedicated clamp countermeasures.
+  - *US12323716* "…improving image quality in a dual conversion gain image sensor" (USPTO
+    snippet; assignee unresolved through the blocks).
+- **Papers**: IEDM 2021 Sony 2.9 µm security pixel, *"97 dB single exposure"* (paper 30-3,
+  authorship per an Image Sensors World summary snippet — low confidence); Image Sensors World
+  2021-06 "Sony Presents 2.9um Pixel with 88dB DR in a Single Exposure" (IISW 2021 — exists,
+  unfetchable); Sensors 18(1):203 (2018) triple-gain 90 dB single-exposure sensor (open
+  access, unfetchable here). **ISSCC: nothing found** for a Starvis-2 combine paper (queries
+  in session record).
+
+#### [inference] — mechanism synthesis (the best literature-anchored story for all five arms)
+
+1. **The combiner has a native "all-reject → BLC pedestal" output state** — documented three
+   separate register routes into it (Q1). Our clamp is byte-identical-register, so it is this
+   same *output state* entered via internal state rather than configuration.
+2. **The combine stage carries per-stream-start internal reference state.** The silicon has an
+   OB-referenced digital clamp block ([doc] 2); the merge demands a pinned HG/LG offset
+   relationship (ToupTek's forced offset-512; LUCID's degenerate-output warning; the AppNote's
+   EXP_GAIN sum window); DCG readout is reference-sample-ordered (US9386240 snippet). Clamp
+   integrators / held averages are canonical *unmapped* state — matching register invisibility.
+3. **A uniformly bright field at engage corrupts that reference.** Prior art recognizes
+   intense light corrupting OB references via leakage/blooming (US20140152844A1), whole-image
+   blackout from a corrupted OB clamp (US7551212), and saturated reset references reading as
+   black (black-sun family). In Clear HDR specifically the OB region itself misbehaves (OB
+   rows latch at HG saturation — Q1 item 7). An OB/reference-sampled initialization performed
+   in the first Clear HDR frames under flood plausibly latches a saturated offset/ratio
+   estimate; selection then rejects everything → pedestal. A dark engage samples a sane
+   reference → dark-start immunity.
+4. **Release semantics match "held state, updated on abnormality or condition change."**
+   US7551212-shaped logic re-clamps when an OB *abnormality* is detected — a one-sided,
+   level-drop-watching detector explains downswing-only stochastic release (the ~2 s dark
+   transient must overlap a sampling window) and never-release-on-increase (a reference
+   latched at the rail cannot be exceeded upward). US8648946-shaped logic re-initializes the
+   held average when *"image pickup conditions change"* — a commanded large SHR step is
+   exactly such a change (and SHR is the one parameter the AppNote binds specially in Clear
+   HDR: doubled minimum, reduced maximum; INNO-MAKER's black-frame cure is a shutter
+   *reduction*) → the deterministic ~0.6 s release. Plain gain/exposure sweeps inside the
+   valid window never cross the re-init trigger's hysteresis.
+5. **SDR immunity follows for free**: WDMODE=0 → COMBI_EN=0 → the combine/clamp machinery
+   never arms.
+
+**Confidence**: the *class* (per-stream-start offset/reference initialization in the HG/LG
+combine stage, saturable by a bright field, re-armed only by a level-drop detector or an
+exposure-condition change) — moderate, ~70%: every component is separately documented, but no
+single source describes the assembled mechanism, and Sony's Clear HDR internals are NDA'd.
+The alternative — the trigger living in the *gradation-compression knee estimator* (knee
+points "come from Low gain and High gain values" per the Pregius-S snippet) — is disfavored:
+the rig clamps identically in 16-bit linear with CCMP disabled.
 
 ### Q6 — Adjacent errata (other Sony HDR families)
 
@@ -535,6 +645,22 @@ From Q4:
   kick" into enable_streams — program SHR to the Clear HDR minimum (16 lines) for the first
   frame after master start, restore the requested exposure a frame later — → lit starts
   recover within ~2 frames instead of never, matching the ~0.6 s commanded-release timing.
+
+From Q5:
+- If the corrupted-reference-at-engage story is right, then engaging Clear HDR under the same
+  flood but with SHR pre-set near its Clear HDR maximum (shortest legal integration, so the
+  field reads far below the selection thresholds) → clean engages, versus consistent clamps at
+  long integration under identical lux — the trigger is signal level at engage, not
+  illumination per se.
+- If US8648946-style "update on imaging-condition change" applies beyond SHR, then while
+  clamped, a large commanded EXP_GAIN step (hdr_gain_adder 2→5 and back) or a rewrite of
+  EXP_TH_H with its current value → release with SHR untouched; if only the SHR path releases,
+  the re-init hook is exposure-specific.
+- If the reference is sampled from the pixel array/OB at stream start only (test patterns
+  "bypass the pixel array entirely so the blend logic is never exercised" — commit 954a52a),
+  then starting the Clear HDR stream with TPG enabled under flood and disabling TPG ~5 s in →
+  the stream comes up clean and stays clean (arming window missed), while the same sequence
+  without TPG clamps — proving the corruptible initialization is confined to the first frames.
 
 ---
 
