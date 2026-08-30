@@ -145,7 +145,114 @@ commits verified first-hand in a local clone with full history)
 
 ### Q2 — Same-architecture siblings (IMX678 / IMX675 / IMX664 / IMX662 / IMX485)
 
-*(pending)*
+*(complete — researched 2026-08-30/31. Same egress caveat as Q1/Q3: non-GitHub sources are
+snippet-only, labelled. All driver-source quotes below were read from local clones and the
+three load-bearing FRAMOS facts (items 2–4) were independently re-verified line-by-line by the
+overseer session.)*
+
+**Ranked result: no sibling document describes our fingerprint — but the sibling ecosystem
+proves the combine/data-selection stage is a separable, bypassable block, and two shipping
+vendor configurations bypass or de-fang exactly the stage our clamp lives in.**
+
+#### [doc]
+
+1. **WDMODE is a path selector, and Sony's own reference Clear HDR for IMX662/IMX678 emits
+   HG/LG as two UNCOMBINED streams (WDMODE=0x08), fusing on the SoC.**
+   framosimaging/framos-nxp-drivers, `isp-vvcam/.../imx662/imx662_regs.h:335–351`
+   (overseer-verified): `imx662_setting_clear_hdr[] = { {WINMODE,0x00}, {WDMODE,0x08},
+   {ADDMODE,0x00}, … {FDG_SEL0,0x02}, {EXP_GAIN,0x02}, … {0x3460,0x22}, {0x3C40,0x05} }`, with
+   `.stitching_mode = SENSOR_STITCHING_DUAL_DCG_NOWAIT` (imx662_mipi.c:606). Same for IMX678
+   (imx678_regs.h: WDMODE 0x01 = DOL at :538, 0x08 = Clear HDR dual-stream at :557, plus a
+   large undocumented-register block). **The HG/LG chains exist and can be output around the
+   combiner — the on-chip combine (our WDMODE=0x10 + COMBI_EN=0x02) is architecturally
+   separable from readout.** <https://github.com/framosimaging/framos-nxp-drivers>
+2. **FRAMOS's official IMX585 Jetson driver runs 16-bit Clear HDR with COMBI_EN=0x00.**
+   framosimaging/framos-jetson-drivers, `fr_imx585_mode_tbls.h:200–206` (overseer-verified):
+   `imx585_clearHDR_16bit_mode[] = { {MDBIT,0x03}, {COMBI_EN,0x00}, … }`, applied ON TOP of
+   the 12-bit Clear HDR table (WDMODE=0x10, COMBI_EN=0x02) by `fr_imx585.c:860–875` for
+   SRGGB16. Our rig's 16-bit mode keeps COMBI_EN=0x02. A shipping vendor driver treats
+   "built-in combination" as optional in the exact bit depth we fail in.
+   <https://github.com/framosimaging/framos-jetson-drivers>
+3. **FRAMOS ships Sony's "initial value" thresholds as defaults, in a 13-bit domain.**
+   `fr_imx585.c:147–168` (overseer-verified): custom controls "Exposure threshold low/high",
+   `.def = 0x1000`, `.max = 0x1FFF` — the equal-threshold configuration that our lineage's
+   commit be3cb94 measured as near-BLC on real scenes. The 0x1FFF ceiling implies data
+   selection compares in a 13-bit domain (12-bit ADC + 1 bit headroom).
+4. **FRAMOS's start sequence differs from ours at the engage moment**: `imx585_start[]`
+   (fr_imx585_mode_tbls.h:133–139, overseer-verified) = STANDBY=0x00 → **wait 30 ms** → XMSTA
+   0x00; per-table settle `IMX585_WAIT_MS` = 10 ms. Ours writes XMSTA=0 *before* standby
+   release with no wait (Q4 baseline step 7). No wait-frames, no illumination precondition,
+   no combine-init note anywhere in the FRAMOS driver either.
+5. **Clear HDR flips "reserved" analog registers on siblings.** IMX662 Clear HDR requires
+   0x3C40 06h→05h and 0x3460 21h→22h (FRAMOS table above; independently corroborated by
+   will127534/imx662-v4l2-driver imx662.c:255: *"{0x3C40, 0x06}, // Normal mode. CHDR=05h"*).
+   Sony's reference settings change undocumented analog-domain registers between Normal and
+   Clear HDR — a class of hidden state the register readback can't audit.
+6. **Register-map identity across the family is confirmed.** AraKiLiu/imx662-v4l2-driver
+   imx662.c:268–286 names 0x3069 = CHDR_GAIN_EN and per-channel CHDR HG/LG gain registers;
+   EXP_TH_H/L, EXP_BK, CCMP1/2_EXP, ACMP1/2_EXP sit at identical addresses to IMX585
+   (0x36D0/0x36D4/0x36E2/…). Sibling findings transfer.
+7. **Runtime constraint on the HG/LG path during CHDR streaming**: FRAMOS NXP imx662_mipi.c:
+   1548–1551: *"Default value for conversion gain should not be changed in Clear HDR stream"*
+   (FDG_SEL0 writes refused while streaming CHDR).
+8. **A shipping third-party IMX585 driver contains the ACMP-swap that produces all-BLC
+   frames**: octopuscinema/linux-camera-support `drivers/media/i2c/imx585.c:1432–1434` writes
+   ACMP1_EXP=0x2 / ACMP2_EXP=0x6 — exactly the out-of-range configuration our lineage's
+   annotation says "produced all-BLC frames in 12-bit ClearHDR mode". (OCTOPUS uses a valid
+   EXP_TH pair 4095/512.) The BLC-pedestal degenerate state is easy to ship accidentally.
+9. **Sony's official Clear HDR description** (snippet only): the sensor *"captures two images
+   simultaneously, one with a low gain level set to the bright region and the other with a
+   high gain level adjusted to the dark region, and the images are then synthesized"*; Clear
+   HDR listed for IMX585/662/664/675/678 (+832/835/838). **IMX485 is DOL-only** (snippets) —
+   the predecessor doesn't carry the suspect stage.
+10. **Sibling manuals exist publicly but were unfetchable here**: "IMX678 Software Reference
+    Manual E Rev 4.0" (Scribd id 897816949; CSDN mirror announcement); IMX678/IMX585
+    datasheets on dl.khadas.com; ModalAI M0186 IMX664 page (*"75.8 dB in a single exposure"*,
+    snippet). Obtainable from any unproxied machine — worth harvesting for combine-stage
+    detail beyond our AppNote.
+11. **Negative results (read in full, not snippets)**: no black-frame/HDR-startup issue in the
+    trackers of will127534/imx585-v4l2-driver (8 issues), will127534/imx678-v4l2-driver (1),
+    framosimaging/framos-jetson-drivers (9). FRAMOS implements Clear HDR only for IMX585 on
+    Jetson (fr_imx678/675/662 tables are DOL-only); Hailo's IMX678 driver is 3-DOL only; VC
+    MIPI's Jetson IMX585 driver exposes SDR only (init lives in VC's module MCU). Mainline:
+    Will Whang's IMX585 v3 submission (2025-08-16) dropped Clear HDR support after review, so
+    no mainline review discussion of the combine exists.
+
+#### [anecdote] (ranked by closeness)
+
+1. **"One frame entirely black" named as the Clear HDR fusion-failure signature for IMX662**
+   (snippet only — piveral.com mirror of NVIDIA forum content): *"If one frame is entirely
+   black in Clear HDR mode for the IMX662, this indicates a failure in fusion; check gain and
+   exposure configurations accordingly."* Closest sibling text to whole-frame black-in-CHDR.
+2. **IMX662 Clear HDR "did not look like the merged image" on Jetson Orin Nano**
+   (forums.developer.nvidia.com t/264319, ~2023, snippet only): brightness jumped, noisy,
+   unmerged; a *"fusion logic error … was fixed in the r35.4.1 release"* (SoC-side fix).
+   Match: combine misbehaving at enablement; not pedestal-black, not sensor-side.
+3. **IMX662 Clear HDR on i.MX8MP: stream starts, Frame Start/End events, no video output**
+   (community.nxp.com td-p/2071177, snippet only) — dual-VC CHDR bring-up difficulty.
+4. **IMX585 Clear HDR pink band on Pi 5** (forums.raspberrypi.com t=388520, snippet only —
+   also in Q3): a luminance band renders wrong around a data-selection threshold.
+5. **IMX678 Clear HDR effectively unavailable to end users** (NVIDIA forum t/211377, snippet
+   only): as of that thread only QHYCCD/ToupTek firmware exposed it — explains sibling silence.
+6. **Hackaday 2026-03-19 on IMX585 Pi HDR** (snippet only): *"a lot of the standard white
+   balance and image control algorithms don't work, and image preview can be unusable at
+   times."*
+
+#### [inference]
+
+1. WDMODE decodes as a path selector (0x01 DOL / 0x08 CHDR-dual-stream-uncombined / 0x10
+   CHDR-with-on-chip-combine). Since Sony's own reference emits HG/LG *around* the combiner on
+   siblings, the combiner/data-selection block is separable — consistent with our clamp living
+   exactly there while defect pixels ride through.
+2. The sibling ecosystem never exercises our exact path: Jetson/FRAMOS ships near-BLC
+   equal-threshold defaults users tune away; NXP bypasses the on-chip combiner entirely; astro
+   vendors run their own FPGA firmware. The on-chip-combine + valid-threshold path is
+   essentially a Raspberry-Pi-lineage exclusive (will127534, Kurokesu, OCTOPUS) — which is
+   precisely where the only two "black in Clear HDR" caveats appear.
+3. A comparator/selection state armed at stream start under bright input, in a 13-bit compare
+   domain, would clamp all output to BLC until the signal crosses back under a release
+   condition — consistent with dark-release and short-integration-release both working while
+   *more* light never releases.
 
 ### Q3 — Community corroboration (forums, GitHub issues, firmware changelogs)
 
@@ -341,6 +448,21 @@ From Q3:
 - If ToupTek's FPGA firmware fixes addressed HDR re-initialization rather than tuning, then
   toggling COMBI_EN (0x3024) 0x02→0x00→0x02 mid-stream on a lit clamped stream → releases or
   re-arms the clamp, mirroring what a firmware-side combine reinit would do.
+
+From Q2:
+- If FRAMOS's fr_imx585 16-bit table is valid silicon usage (WDMODE=0x10 + COMBI_EN=0x00 +
+  MDBIT=0x03), then starting a lit 16-bit stream with COMBI_EN=0x00 → either no clamp (the
+  clamp lives in the built-in combination gated by COMBI_EN) or clamp persists (it lives in
+  the WDMODE=0x10 data-selection stage upstream of combination). Either outcome localizes the
+  latch by one register.
+- If the sibling WDMODE map transfers (0x08 = Clear HDR dual-stream uncombined per FRAMOS NXP
+  imx662/678 tables), then a lit engage with WDMODE=0x08 → non-pedestal HG/LG data (likely two
+  virtual channels / doubled rows, needing CFE DT tolerance), proving readout and both gain
+  chains are healthy while only the combiner latches.
+- If Kurokesu's "bright parts of a scene can render black" is the per-pixel form of the same
+  mechanism, then a lit engage on a half-flooded/half-dark scene → only the lit half sits at
+  exactly the pedestal while the dark half shows normal read noise (per-pixel data-selection
+  verdict), whereas a fully global latch predicts the dark half clamps too.
 
 ---
 
