@@ -1277,3 +1277,31 @@ pasted verbatim in the round 3.1 result; operator at the rig (cover/reveal execu
 scene confirmation, and directing the addendum take). Key artifacts: takes 233731
 (covered-clean), 233829 (reproduced healthy flat), 234032 (1° discriminator), 235058
 (210-frame live escape; 86 frames archived off-device).
+
+## 2026-08-31 — Addendum to the round 3.1 escape capture: the transition shape tracks the operator's hand, and the release itself happened under sustained cover
+
+**Tested:** nothing new on the rig — the operator's unprompted recollection of their
+cover/reveal motion ("covered it pretty early, for a couple of seconds, fumbling a bit,
+then removed the hand quickly"), mapped against take 235058's frame timeline by the worker,
+who described the frame shape only after asking.
+
+**Worked:** the mapping is clean and uncoached: held-cover ↔ frames 0–66 (pedestal),
+fumbling ↔ 68–98 (the ~6.5% plateau = the covered-dark REAL level with leak fluctuations),
+withdrawal ↔ 99–108 (climb), quick removal ↔ 109–112 (the 190 ms jump), hand clear ↔
+112–208 (locked flood). The post-release trace needs no internal-dynamics explanation — it
+is photometry of the hand motion. Corroborating (recollection, not synced), not proof.
+
+**Why (overseer refinement to the round 3.1 entry):** the mapping also pins the RELEASE
+timing more precisely than the original entry stated. The clamp outputs 3200 under any
+light, so the cover moment is invisible in the data — frames 0–66 span uncovered AND
+covered phases indistinguishably. The release at frame 67 therefore happened **under the
+cover, seconds after covering, at the onset of the fumble** — sustained full darkness alone
+did not release it instantly; it took a couple of seconds of dark (or the fumble's
+micro-transients) before the state let go, and everything after frame 67 is real signal
+tracking light. The release-mechanism axis in model M is refined accordingly: "a downward
+light transient releases the clamp, with seconds-scale latency or a need for fluctuation —
+which of the two is untimed" [P].
+
+**Confirmed by:** operator recollection (in-session, after seeing the frame data described)
++ worker's frame-timeline mapping; corroborating evidence explicitly, per the worker's own
+caveat. Refines, does not change, the round 3.1 register findings or the REAL-SIGNAL verdict.
