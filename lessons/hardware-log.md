@@ -867,3 +867,98 @@ once it does pull, cam0 starts genuinely recording log rather than linear.
 **Confirmed by:** operator (boot restored, this session); journald `cinemate-autostart` on the
 unit; git history for the pin pair being pre-existing; offline gpiozero MockFactory
 reproduction against the Pi's own `settings.jsonc` (this session).
+
+## 2026-08-27/28 — RP1 overclock IS compatible with mono ClearHDR; the real limits are storage and a shutter-apply delay
+
+**Tested:** the full overclock × CSI-2 link-rate × mode matrix on the dev CM5, imx585 mono,
+`fix/mono-clearhdr-stack` in both repos, patched rp1-cfe, `innomaker-v1.0` driver. Seven cells
+planned, six run (1188/1440/1782 Mbps × stock/overclocked), three modes each (4K 12-bit SDR,
+4K 12-bit CCMP HDR, 16-bit ClearHDR) at two shutter angles ~3 stops apart, plus soaks.
+Deliverable `development/mono-clearhdr-fixes/RATE-MATRIX-RESULTS.md`; overseer verification in
+`OVERSEER-NOTES-R4.md`.
+
+**Worked:** the question the campaign existed to answer — **the RP1 overclock (580 MPix/s)
+runs mono ClearHDR cleanly at 1440 Mbps**, 8/8 takes byte-REAL across all three modes and both
+log states. That combination had never been tested on the fixed stack. The whole in-spec
+envelope (1188/1440 × stock/overclock) was clean: 32 takes, zero motif, zero truncation, zero
+fill. 1782 Mbps (19% over the D-PHY spec, kernel logs `DPHY: Datarate 1782 Mbps out of range`
+once per boot) was clean on 16/16 short takes at both clocks. Settled-frame exposure response
+was exact — 8.1–8.5× measured for a commanded 8× shutter step, overseer-verified by pulling
+frames and decoding them independently in cells 1, 2, 4 and 5.
+
+**Did not work / surprised:**
+- **No multi-minute soak was achievable at 16-bit.** A 12-bit 21 fps soak (~264 MB/s) ran
+  2520/2520 frames clean, but every 16-bit soak (~355+ MB/s) stalled after ~15–22 s: the RAM
+  pool (173 frames ≈ 2941 MB) fills and frames stop arriving — cleanly, no corruption, no
+  telemetry loss. `/media/RAW` is NTFS via `fuseblk` on NVMe. So **1782 Mbps stays
+  labelled-risk**: its minutes-scale behaviour is still unproven. 2079 Mbps was never reached.
+- **The overclock buys no frame rate here.** Advertised fps was identical with it on or off at
+  every link rate (21.99 @1440, 30.00 @1782). It raises the RP1 pixel-rate ceiling, which only
+  matters when a mode approaches it — 3840×2200 does not.
+- **`hdr_threshold_low`/`high` silently degraded to 0/0 mid-session**, producing a total BLC
+  pedestal fill with nothing logged, persisting across reboots (Redis-backed). Re-issuing
+  `set hdr threshold low 2048` / `high 3584` restored real data instantly, no reboot. Suspected
+  trigger: the quad-rotary init-failure loop (`No I2C device at 0x49`, this rig has no pots).
+- **A post-mode-switch shutter change lands ~12 frames into the *next* recording.** Byte-
+  measured from within-take frame profiles: a step between frames 10 and 15, then a stable
+  plateau — not a slow ramp. Even a 4.5 s pre-record settle did not help; SDR applies promptly.
+  Practical rule adopted since: **sample frame ≥ 20 for any exposure verdict.**
+
+**Why:** the link-rate/overclock question is answered and is not the limiting factor. The
+limits are elsewhere — sustained write bandwidth on NTFS-over-FUSE, and a control-apply path
+whose mechanism is still unidentified (the round-4 note's original "the shutter command lands
+late" wording was later withdrawn as unsupported; the measurement stands, the mechanism does
+not). The threshold degradation is a CineMate state defect, not a rate or clock effect: it
+reproduced at 1188/1440/1782 and at both clock states.
+
+**Confirmed by:** operator (live session, 2026-08-27 night → 08-28); worker deliverable
+`RATE-MATRIX-RESULTS.md`; independent overseer re-verification — frame pulls decoded with
+`tools/dng_inspect.py`, soak takes compared frame-10-vs-last, and the D-PHY clamp line quoted
+from `dmesg` directly. Recommended default left unchanged at **1440 Mbps / stock clock**, and
+the rig was restored to it at session end.
+
+## 2026-08-29/30 — ClearHDR can start latched into a flat BLC pedestal with every sensor register correct
+
+**Tested:** the imx585 mono ClearHDR "pitch black at startup" defect the operator reported,
+over rounds 7 and 8 on `fix/mono-clearhdr-stack` (later `dev`), driver `innomaker-v1.0`
+@ `70bdb26`. Every ClearHDR-relevant sensor register read **over raw I2C while the failing
+take was streaming** — not via `v4l2-ctl`, which reads the driver's control cache — on both a
+failing boot and a working one. Deliverables `ROUND8-RESULTS.md`, `OVERSEER-NOTES-R6.md`,
+`OVERSEER-NOTES-R8.md`.
+
+**Worked:** the defect is real, reproducible, and now sharply bounded. A resolution bounce, a
+light transient in *either* direction (flashing a light at the sensor, covering it by hand),
+or briefly setting the shutter to 1° all clear it — every one operator-confirmed live. SDR at
+the same shutter and ISO produces a real, near-saturated image on a filling boot, so the rig is
+receiving light and the fill is ClearHDR-specific.
+
+**Did not work / was eliminated:** every hypothesis raised across three rounds. WDMODE `0x10`,
+COMBI_EN `0x02`, CCMP_EN, ACMP1/2, EXP_TH_H/L, EXP_BK, CCMP1/2_EXP, ADDMODE (`0x00`,
+non-binned), DIGITAL_CLAMP and the ClearHDR analogue-retiming registers **all read their
+correct values during a confirmed failing take, byte-identical to a working boot**. Also dead:
+unsigned SHR underflow and stale SDR timing (both refuted by arithmetic — integration is a sane
+708 lines ≈ 7.15 ms); a late/racing `wide_dynamic_range` write (`dmesg` shows `HDR=1` 2.2 s
+*before* `Streaming started`); sync-follower; `BIN_MODE 0x3019` (a mono/colour *select* flag,
+not the binning axis — SDR sets it too and works); and the WDR retry (a cold start into
+ClearHDR never calls it and still fills).
+
+**Why:** **not established.** The strongest datum is that the pedestal is 4.88% of full scale
+in *both* 12-bit CCMP (200/4095) and 16-bit linear ClearHDR (3200/65535) — 3200 = 200 × 16, the
+same sensor BLC pedestal in two containers. 16-bit linear runs `CCMP_EN = 0x00` with no
+decompand LUT in the path at all, which rules out every software-decompand explanation and
+means **this is a ClearHDR defect, not a CCMP one**. Current best inference, explicitly
+*probable* and not confirmed: something in the sensor's analogue HG/LG combiner, upstream of
+both digital paths and invisible to anything readable over I2C or v4l2 — the bidirectional
+recovery (brighter *or* darker both clear it) fits a bistable latch better than a threshold
+crossing. Open and unmeasured: whether **entry** into the state correlates with the light level
+at ClearHDR activation. Every recovery observed so far describes *escape*, which is a different
+question; the rig is bare and lensless at ~99.9% of full scale, and round 3 separately recorded
+a constant-200 BLC pedestal on an overexposed scene.
+
+**Confirmed by:** operator (live, repeatedly, across several boots — including the original
+report, the light-flash and hand-cover recoveries, and the shutter-to-1° recovery);
+`ROUND8-RESULTS.md`'s register table, each row cited to `imx585.c` at the exact commit verified
+byte-identical to the DKMS build source on the Pi; overseer arithmetic on SHR/VMAX/HMAX and
+independent refutation of the `BIN_MODE` lead. Note `srcversion` disagreed with an earlier
+session's recorded value on identical source — it is kernel-header-sensitive, so **verify driver
+identity by source diff, not by `srcversion`**.
