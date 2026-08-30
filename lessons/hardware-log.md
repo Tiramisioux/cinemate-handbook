@@ -1079,3 +1079,48 @@ being about sustained writes, not short bursts.
 **Confirmed by:** worker journal excerpts and mount/ls output pasted verbatim in the round 1
 partial result (campaign overseer thread, 2026-08-30); the reformat operator-confirmed
 in-session.
+
+## 2026-08-30 — Campaign round 1: 2/2 cold bare-lit boots FILL on the decontaminated stack; H3-transient dead; first fill-time reads of EXP_GAIN/HMAX/VMAX/SHR/BLKLEVEL; an instrumented mode-bounce escape failure
+
+**Tested:** cold samples 1–2 of the first-engage entry-rate series (bare lit scene, mono
+16-bit linear ClearHDR sensor_mode 4, exFAT storage, self-heal off, persistent journald) on
+the decontaminated stack (cinemate bf4b68d / cinepi-raw dad2247 / driver 70bdb26). Verdicts
+by off-device DNG decode of pulled frames. Plus an operator-initiated (unscripted)
+ClearHDR→SDR→ClearHDR mode bounce on the sample-2 boot.
+
+**Worked:** the measurement protocol. Both boots gave byte-level verdicts: mean
+3201.7–3201.8 (4.886% of full scale), **99.11% of pixels EXACTLY 3200 = BLKLEVEL(50)×64**
+in the 16-bit container, with a fixed defect population riding on top (841 hot @65535,
+11 667 dead @0, ±16 skirt). Registers during both fills byte-identical and **correct**
+(EXP_TH_H 0x0FFF, EXP_TH_L 0, WDMODE 0x10, COMBI_EN 0x02). Campaign debt 6 closed — first
+ever fill-time reads: EXP_GAIN 0x3081 = 0x01 (cinemate's +6 dB seed), HMAX 750, VMAX 4714,
+SHR 2732 → integration 1982 lines ≈ 23.8 ms — a real exposure sitting at the black
+pedestal. SDR on the SAME boot, same room light, minutes apart, was white/overexposed
+(operator-observed) — the darkness confound is excluded on the failing boot itself, not
+just by general rig knowledge.
+
+**Did not work:** 2/2 cold bare-lit boots filled, present from frame 0 — the Phase-0
+decontamination did NOT remove the entry mechanism. **H3-transient is dead for both boots**
+per the pre-registered prediction: persistent-journal greps for any threshold/EXP_TH write
+before the fills came back empty, Redis threshold keys empty. The unscripted mode bounce —
+including two real driver-logged power cycles (~1.8–2 s off) and an SDR interlude showing
+white — did **not** clear the fill: the first bounce failure ever captured with DNG evidence
+on both sides, and direct proof the state survives short power cycles. Also: **uniq ≈ 230,
+not 1**, on every fill frame — any detector keyed on uniq==1 misses this fill entirely (the
+defect population dominates uniq), confirming the recorded zero-information finding against
+the preview-uniq detector from the other side.
+
+**Why:** not established, but the field narrowed hard: no userspace writer (two boots),
+registers byte-correct during the fill, real integration, light present at the sensor. The
+~2 s power cycles failing to clear it says short vana cuts don't reset whatever holds the
+state; longer cuts and light-at-engage are exactly what Phase 1 (round 2, issued on the
+still-held fill) discriminates. The 99.11%-exact-single-value shape is digital-clamp-like
+rather than dark-exposure-like (worker inference, flagged as such; darkness independently
+excluded above).
+
+**Confirmed by:** worker session — off-device DNG decode, raw-I2C reads during the fills,
+journal greps — pasted verbatim in the round 1 (resumed) result; operator at the rig (lit
+room, SDR-white observation, mode-bounce actions, explicit decision to spend sample 1's
+boot). Fill-boot journals archived on-Pi (`journal-20260830-FILL-c86eae30.log`,
+`journal-20260830-FILL-a5bb782a.log`). Boot a5bb782a left FILLING and held as Phase 1's
+subject.
