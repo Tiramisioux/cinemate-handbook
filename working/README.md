@@ -9,4 +9,7 @@ behavior; [`testing.md`](testing.md) for what to run and what to write;
 device;
 [`clearhdr-campaign-overseer-prompt.md`](clearhdr-campaign-overseer-prompt.md) for the
 ready-to-paste opening prompt of the overseer thread running the ClearHDR stabilisation
-campaign (one experiment per round, operator-observed, pre-registered predictions).
+campaign (one experiment per round, operator-observed, pre-registered predictions); and
+[`clearhdr-campaign-worker-prompt.md`](clearhdr-campaign-worker-prompt.md) for the matching
+worker-session prompt (executes ROUND blocks verbatim, returns fixed-format RESULT blocks,
+never merges).
