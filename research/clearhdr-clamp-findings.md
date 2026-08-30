@@ -583,7 +583,105 @@ the rig clamps identically in 16-bit linear with CCMP disabled.
 
 ### Q6 — Adjacent errata (other Sony HDR families)
 
-*(pending)*
+*(complete — researched 2026-08-30/31. Egress caveat: every machine-vision vendor domain
+(FLIR/Teledyne, Basler, Lucid, Allied Vision, IDS, XIMEA…), astro vendor sites, NVIDIA
+forums, and lore.kernel.org were blocked — the machine-vision release-note goldmine could
+NOT be assayed, so absence there is unproven, not established. Kernel/driver quotes below
+were fetched from raw sources; the top item was independently re-fetched and quote-verified
+by the overseer.)*
+
+**Ranked result: the closest documented relative anywhere is Sony's own on-chip-combine
+sensor on our own platform — the IMX708, whose vendor helper silently discards the first
+startup frame in HDR mode only. No black-image latch erratum was found in any Sony family.**
+
+#### [doc]
+
+1. **IMX708 (Pi Camera Module 3, on-sensor QBC-HDR merge): the first startup frame in HDR
+   mode specifically is bad, and Raspberry Pi's helper discards it.**
+   raspberrypi/libcamera `src/ipa/rpi/cam_helper/cam_helper_imx708.cpp` (fetched;
+   overseer-re-verified): *"We need to drop the first startup frame in HDR mode. Unfortunately
+   the only way to currently determine if the sensor is in the HDR mode is to match with the
+   resolution and framerate."* `hideFramesStartup()`/`hideFramesModeSwitch()` return 1 only in
+   the HDR mode, 0 otherwise. **Start-condition-specific, HDR-combine-specific, absent in
+   SDR — exactly our envelope, except the IMX708's bad state self-clears after one frame
+   instead of latching.** Not stated to be light-dependent.
+2. **IMX708 kernel driver: on-chip HDR cannot be toggled while streaming** —
+   raspberrypi/linux `drivers/media/i2c/imx708.c` (fetched): the wide-dynamic-range control
+   carries `V4L2_CTRL_FLAG_MODIFY_LAYOUT` and is grabbed during streaming. The combine
+   engages only at stream start on Sony on-chip-combine parts — consistent with an
+   engage-time-armed state.
+3. **IMX290 family: stream-start frames are suspect even in linear mode** — raspberrypi/
+   libcamera `cam_helper_imx290.cpp` (fetched): *"On startup, we seem to get 1 bad frame."* /
+   *"After a mode switch, we seem to get 1 bad frame."* And mainline `imx290.c` (fetched):
+   *"vflip and hflip should not be changed during streaming as the sensor will produce an
+   invalid frame"* — mainline ships **no DOL support at all** for the DOL patriarch.
+4. **Rockchip BSP IMX415 (DOL): hidden mode-polarity registers and fragile HDR arithmetic** —
+   `rockchip-linux/kernel drivers/media/i2c/imx415.c` (fetched): *"0x3260 should be set 0x01
+   in normal mode, should be 0x00 in hdr mode"*; *"IMX415 HDR mode T-line is half of Linear
+   mode, make vts double to workaround"*; RHS1 alignment rules (*"rhs1 should be 4n+1 when set
+   hdr ae"*). No black-latch, but undocumented mode-dependent registers where wrong values
+   break output.
+5. **OpenIPC "waybeam" IMX662 (Starvis 2 sibling): Clear HDR deferred; blend documented as
+   corruptible by write ordering** — `imx662_cmos.c` (code-search fragments + README fetched):
+   *"FDG_SEL1 (3031h) … has no slot here, so stamping 0/1 every frame would silently corrupt
+   an HDR blend"*; README: linear only, *"HDR stays deferred."* An active bring-up treats the
+   HG/LG blend as fragile against register sequencing and shipped without it.
+
+#### [anecdote] (ranked by closeness)
+
+1. **ZWO ASI294 / IMX294 (DCG): dual-gain crossover pathology under bright uniform light**
+   (snippets only — AstroBin topic 56402, Cloudy Nights flats threads): at gains ~120–140
+   around the HCG/LCG switch, flat frames plateau below saturation — *"If increasing exposure
+   no longer affects the histogram and pixels remain unsaturated, you have the problem"*;
+   community workaround: avoid the crossover band. **A Sony dual-conversion-gain selector
+   misbehaving specifically under bright uniform fields** — the same stimulus that arms our
+   latch — though the failure is a clipping plateau, not black, and not latched.
+2. **Jetson + IMX662 Clear HDR wrong at bring-up, fixed by a platform "fusion logic" update**
+   (snippets — NVIDIA forum t/264319 & mirrors): unmerged/bright/noisy output; *"the fusion
+   logic error … was fixed in the r35.4.1 release."* Combine-enable failure, but SoC-side and
+   not black. (Also in Q2.)
+3. **OpenIPC firmware #573 — HI3516EV300 + IMX335: camera started in the DARK fails to start;
+   started in light runs fine; once running, light changes don't hurt** (fetched:
+   github.com/OpenIPC/firmware/issues/573, 2022-11, open). **The exact logical shape of ours
+   with opposite polarity** — start-condition-dependent, scene-luminance-dependent, hysteretic
+   — but almost certainly an AE/ISP pipeline failure, and only a restart releases it.
+4. **Jetson + IMX678 DOL threads** (snippets): fused image correct until an object moves
+   dark→bright, then *"the 'overexposed' area appears pink"*; short frames not fused on
+   r36.2. Light-transition-dependent combine misbehaviour, ISP-side.
+5. **QHY294C: the first frame after an exposure-time change is discarded by design**
+   (snippet — SharpCap forum t=3532): *"camera will give up the first frame that you changed
+   expose time."* On IMX294 platforms an exposure-time change is the canonical internal-state
+   flush event — echoing that our latch releases on a commanded integration-time cut.
+6. **Arducam IMX477** (snippet): the *"image abnormality in the first frame"* can be *"resolved
+   with a firmware upgrade"* — precedent for Sony sensor-side first-frame defects fixed in
+   sensor microcode; non-HDR part.
+
+**Explicit nothing-found:** machine-vision release notes (FLIR/Basler/Lucid/Allied Vision/
+IDS/Daheng/Hikrobot/XIMEA) — candidate documents located but domains blocked; only recovered
+Dual-ADC constraint: *"Dual ADC Mode is not available when ADC Bit Depth is set to 8-bit or
+10-bit"* (snippet). Sony technical notices/errata: nothing (only adjacent datum: industrial
+IMX900 *"does not include an HDR compositing function"*, snippet). Broadcast/cinema dual-gain
+(IMX410/455/571): nothing shaped like ours — their HCG/LCG is a global mode select, not an
+on-chip per-pixel combine, so the suspect circuit isn't exercised. One unfetchable lead
+flagged for an unproxied machine: "Sony IMX290/462 image sensors I2C xfer peculiarity"
+(lkml.iu.edu, 2023-10).
+
+#### [inference]
+
+1. Across every ecosystem where a Sony on-chip combine ships (IMX708 QBC-HDR, IMX662/678
+   Clear HDR), the combine is (a) only engageable with the stream stopped and (b) known to
+   produce at least one invalid frame at HDR stream start. **Our latch looks like the
+   pathological limit of the IMX708 behaviour: the settling that normally completes in one
+   frame never completes when the first integrations are uniformly lit**, and nothing re-arms
+   the HG/LG selector until a large downward exposure/illumination step drives it back through
+   its threshold.
+2. The IMX294 crossover plateau and waybeam's "silently corrupt an HDR blend" warning both
+   point at the HG/LG selection logic — not the exposure engine — as the family's fragile
+   element, and the IMX294 case specifically implicates bright uniform fields.
+3. No source anywhere describes a register-invisible latched state; that facet appears
+   publicly novel. Machine-vision silence is weak evidence: Pregius-S dual-ADC combine is
+   typically configurable only with acquisition stopped, so the failure may be unreachable in
+   those products.
 
 ---
 
@@ -661,6 +759,21 @@ From Q5:
   then starting the Clear HDR stream with TPG enabled under flood and disabling TPG ~5 s in →
   the stream comes up clean and stays clean (arming window missed), while the same sequence
   without TPG clamps — proving the corruptible initialization is confined to the first frames.
+
+From Q6:
+- If the IMX708 "first HDR startup frame is bad" mechanism is the benign form of our latch,
+  then starting the Clear HDR stream with integration pre-programmed to its minimum for the
+  first few frames, then lengthening it → no black lock even under uniform bright light — the
+  release stimulus (large integration cut) baked into the start sequence. (Converges with
+  Q4's integration-kick prediction.)
+- If the IMX294 crossover pathology shares the HG/LG selector lineage, then a stream started
+  against a high-contrast half-dark/half-bright target → never latches at any brightness,
+  while a uniform gray card latches across a wide brightness range — uniformity, not absolute
+  level, is the arming condition. (Converges with Q2/Q3's structured-scene predictions.)
+- If the Jetson IMX662 analogy (platform-side fusion) were right, defect pixels would blacken
+  with everything else; since hot pixels ride through on our rig, a raw-CSI2 tap during a
+  clamp should show pedestal-exact black already in the sensor's own output — re-confirming
+  sensor locus against any lingering ISP suspicion.
 
 ---
 
