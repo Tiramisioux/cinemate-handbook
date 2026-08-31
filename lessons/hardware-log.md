@@ -1405,3 +1405,47 @@ after each shutter command, scripted-timing redo methodology), pasted verbatim i
 3.3 result; operator at the rig (cover attempts, the live catch of the timing miss, the
 free-step mode change). Takes 000945/001048 (cover attempts), 001441/001701 (contaminated
 step-4 + accidental-hold evidence), 002129 (the decisive instrumented release) all retained.
+
+## 2026-08-31 — Campaign round C1 (colour rig bring-up): driver-independent kernel BUG on imx585 module reload; the campaign's rmmod-based plans were a landmine never stepped on
+
+**Tested:** bring-up of the colour imx585 rig (4 GB CM5, kernel 6.12.93+rpt-rpi-2712,
+exFAT NVMe, healthy 42.8 KB colour tuning file — no debt-14 on this rig) to the pinned
+campaign stack: cinemate dev @ bf4b68d, cinepi-raw dev @ 24fd76a (= mono's dad2247 + the
+#70 README fix), libcamera cinemate @ 3c7b9ab (a local 380→580 overclock-companion tweak
+and a stripped pre-campaign settings.jsonc were both STASHED with labels, not discarded),
+then a driver switch attempted twice: innomaker-v1.0 @ 70bdb26, and — operator's choice —
+6.12.y at tip (cb7c7a6, which is the 2026-08-10 colour-golden 479117e plus exactly one
+commit changing hdr_thresh_def from the prohibited {512,1024} to the campaign-consistent
+{0x0FFF, 0}).
+
+**Worked:** the survey and userspace upgrade. Both driver branches DKMS-build and install
+cleanly, source-diff-verified. Boot-time probes succeed cleanly on both branches (verified
+via lsmod on fresh boots before any manual intervention).
+
+**Did not work:** `rmmod imx585` + `modprobe imx585` inside a booted session SEGFAULTS the
+probe with a kernel BUG — reproduced twice, byte-for-byte identical, on BOTH driver
+branches: `kernel BUG at drivers/media/mc/mc-entity.c:146!`, PC media_gobj_create+0xdc [mc],
+call trace cfe_async_complete [rp1_cfe] → v4l2_async_nf_try_complete →
+__v4l2_async_register_subdev → imx585_probe, firing immediately after "rp1-cfe … Registered
+[rp1-cfe-fe_config] node id 7". Kernel left tainted (G D W O), module in an undefined
+half-probed state. **The crash is driver-independent: the discriminating variable is
+RELOAD, not driver source.** Worker's working theory, explicitly not source-verified:
+rp1_cfe does not tear down its media-graph object state when the sensor unloads, so a
+second probe re-registers a live node ID and trips the media-controller core's
+duplicate-registration assertion.
+
+**Why it matters beyond this rig (worker's structural catch):** this was, as far as the
+session record shows, the FIRST actual rmmod+modprobe cycle of the whole campaign — every
+mono-rig "restart" was systemd stop/start, which never unloads the module. The mono plan's
+"rmmod + 5 min soak" discriminating step (round 2 step 5, prepared branch B) was therefore
+invalid as designed and was avoided by construction, not verification. **New method rule,
+both rigs: never manually rmmod/modprobe camera sensor modules on a live system — module
+reset = reboot.** New campaign debt 18: investigate at the desk (rp1-cfe remove/probe
+paths + the mc-entity.c:146 assertion; check raspberrypi/linux for known reports; candidate
+upstream bug report). Until debt 18 closes, no experiment may assume module reload works.
+
+**Confirmed by:** worker session (dmesg captures of both crashes, dkms/source-diff
+verification, clean-boot lsmod checks), pasted verbatim in the round C1 result; operator at
+the rig (authorized stopping their own manually-started session; performed the recovery
+reboot; chose 6.12.y as the colour driver). Colour entry verdict (phase 3) NOT reached —
+requeued as round C1.2 after a clean reboot.
