@@ -725,27 +725,6 @@ All frames recorded over SSH and analysed off-device; takes and per-rate results
 against `raspberrypi/linux` `rpi-6.12.y` and independently corroborated by the desk-analysis
 session, which also cites the RP1 datasheet §8.2.
 
-## 2026-08-27 — Ported upstream driver fixes did not change the mono ClearHDR fill
-
-**Tested:** driver branch `port/clearhdr-upstream-fixes` (Tiramisioux/imx585-v4l2-driver, three
-commits porting upstream bb53099a binned-ClearHDR gate + 728904bb 16-bit 2200-row mode +
-c0f54045 HMAX 472/floor 550 onto the 6.12.y snapshot), installed on the mono rig via
-`~/imx585-v4l2-driver` `setup.sh` DKMS rebuild.
-**Worked:** DKMS build/install and streaming on 6.12.93 — implied by the operator completing
-the test (this was the port's first compile anywhere; it was desk-authored with no compile
-gate on the Mac). The branch is therefore build-valid and stays on GitHub.
-**Did not work:** the mono ClearHDR fill defect persisted unchanged — operator: "same result".
-Exact run conditions (modes, link rate, overclock state, fps) were not captured in-session;
-the rig had been left at 1782/overclock-ON per LIVE-RESULTS-2026-08-27 §"rig left at".
-**Why:** mechanism not established. Two cautions for the next reader: (1) at ≤1440 Mbps the
-c0f54045 HMAX floor is inert (12-bit table value 660 ≥ floor 550), and the other two ports
-address binned BLC and 16-bit buffer height — so a persisting *full-res* fill at 1440 was not
-predicted to be fixed by this port and does not falsify it; (2) the overclock confound from
-the previous entry (1440 + overclock ON + fps 19 never run) is still the outstanding
-discriminator.
-**Confirmed by:** operator, 2026-08-27 chat session. Driver reverted to `6.12.y` (cb7c7a6)
-immediately after; operator pursuing a different approach.
-
 ## 2026-08-27 (evening) — Mono ClearHDR byte-level forensics: 16-bit is a capture-path format bug, binned 12-bit is real sensor BLC
 
 **Tested:** structured/overexposed mono takes pulled off /media/RAW and decoded byte-by-byte on
@@ -895,10 +874,6 @@ frames and decoding them independently in cells 1, 2, 4 and 5.
 - **The overclock buys no frame rate here.** Advertised fps was identical with it on or off at
   every link rate (21.99 @1440, 30.00 @1782). It raises the RP1 pixel-rate ceiling, which only
   matters when a mode approaches it — 3840×2200 does not.
-- **`hdr_threshold_low`/`high` silently degraded to 0/0 mid-session**, producing a total BLC
-  pedestal fill with nothing logged, persisting across reboots (Redis-backed). Re-issuing
-  `set hdr threshold low 2048` / `high 3584` restored real data instantly, no reboot. Suspected
-  trigger: the quad-rotary init-failure loop (`No I2C device at 0x49`, this rig has no pots).
 - **A post-mode-switch shutter change lands ~12 frames into the *next* recording.** Byte-
   measured from within-take frame profiles: a step between frames 10 and 15, then a stable
   plateau — not a slow ramp. Even a 4.5 s pre-record settle did not help; SDR applies promptly.
@@ -906,10 +881,8 @@ frames and decoding them independently in cells 1, 2, 4 and 5.
 
 **Why:** the link-rate/overclock question is answered and is not the limiting factor. The
 limits are elsewhere — sustained write bandwidth on NTFS-over-FUSE, and a control-apply path
-whose mechanism is still unidentified (the round-4 note's original "the shutter command lands
-late" wording was later withdrawn as unsupported; the measurement stands, the mechanism does
-not). The threshold degradation is a CineMate state defect, not a rate or clock effect: it
-reproduced at 1188/1440/1782 and at both clock states.
+whose mechanism is still unidentified (the original "the shutter command lands late" wording
+was later withdrawn as unsupported; the measurement stands, the mechanism does not).
 
 **Confirmed by:** operator (live session, 2026-08-27 night → 08-28); worker deliverable
 `RATE-MATRIX-RESULTS.md`; independent overseer re-verification — frame pulls decoded with
@@ -917,81 +890,31 @@ reproduced at 1188/1440/1782 and at both clock states.
 from `dmesg` directly. Recommended default left unchanged at **1440 Mbps / stock clock**, and
 the rig was restored to it at session end.
 
-## 2026-08-29/30 — ClearHDR can start latched into a flat BLC pedestal with every sensor register correct
+## 2026-08-30 — A threshold write outlives restarts and sensor power cycles via V4L2 control-cache replay
 
-**Tested:** the imx585 mono ClearHDR "pitch black at startup" defect the operator reported,
-over rounds 7 and 8 on `fix/mono-clearhdr-stack` (later `dev`), driver `innomaker-v1.0`
-@ `70bdb26`. Every ClearHDR-relevant sensor register read **over raw I2C while the failing
-take was streaming** — not via `v4l2-ctl`, which reads the driver's control cache — on both a
-failing boot and a working one. Deliverables `ROUND8-RESULTS.md`, `OVERSEER-NOTES-R6.md`,
-`OVERSEER-NOTES-R8.md`.
-
-**Worked:** the defect is real, reproducible, and now sharply bounded. A resolution bounce, a
-light transient in *either* direction (flashing a light at the sensor, covering it by hand),
-or briefly setting the shutter to 1° all clear it — every one operator-confirmed live. SDR at
-the same shutter and ISO produces a real, near-saturated image on a filling boot, so the rig is
-receiving light and the fill is ClearHDR-specific.
-
-**Did not work / was eliminated:** every hypothesis raised across three rounds. WDMODE `0x10`,
-COMBI_EN `0x02`, CCMP_EN, ACMP1/2, EXP_TH_H/L, EXP_BK, CCMP1/2_EXP, ADDMODE (`0x00`,
-non-binned), DIGITAL_CLAMP and the ClearHDR analogue-retiming registers **all read their
-correct values during a confirmed failing take, byte-identical to a working boot**. Also dead:
-unsigned SHR underflow and stale SDR timing (both refuted by arithmetic — integration is a sane
-708 lines ≈ 7.15 ms); a late/racing `wide_dynamic_range` write (`dmesg` shows `HDR=1` 2.2 s
-*before* `Streaming started`); sync-follower; `BIN_MODE 0x3019` (a mono/colour *select* flag,
-not the binning axis — SDR sets it too and works); and the WDR retry (a cold start into
-ClearHDR never calls it and still fills).
-
-**Why:** **not established.** The strongest datum is that the pedestal is 4.88% of full scale
-in *both* 12-bit CCMP (200/4095) and 16-bit linear ClearHDR (3200/65535) — 3200 = 200 × 16, the
-same sensor BLC pedestal in two containers. 16-bit linear runs `CCMP_EN = 0x00` with no
-decompand LUT in the path at all, which rules out every software-decompand explanation and
-means **this is a ClearHDR defect, not a CCMP one**. Current best inference, explicitly
-*probable* and not confirmed: something in the sensor's analogue HG/LG combiner, upstream of
-both digital paths and invisible to anything readable over I2C or v4l2 — the bidirectional
-recovery (brighter *or* darker both clear it) fits a bistable latch better than a threshold
-crossing. Open and unmeasured: whether **entry** into the state correlates with the light level
-at ClearHDR activation. Every recovery observed so far describes *escape*, which is a different
-question; the rig is bare and lensless at ~99.9% of full scale, and round 3 separately recorded
-a constant-200 BLC pedestal on an overexposed scene.
-
-**Confirmed by:** operator (live, repeatedly, across several boots — including the original
-report, the light-flash and hand-cover recoveries, and the shutter-to-1° recovery);
-`ROUND8-RESULTS.md`'s register table, each row cited to `imx585.c` at the exact commit verified
-byte-identical to the DKMS build source on the Pi; overseer arithmetic on SHR/VMAX/HMAX and
-independent refutation of the `BIN_MODE` lead. Note `srcversion` disagreed with an earlier
-session's recorded value on identical source — it is kernel-header-sensitive, so **verify driver
-identity by source diff, not by `srcversion`**.
-
-## 2026-08-30 — Campaign round 0.1: #176/#69 gates PASS; a threshold write outlives restarts via V4L2 control-cache replay
-
-**Tested:** ClearHDR stabilisation campaign round 0.1 on the mono rig — decontamination and
-threshold-semantics verification. Stack: cinemate `dev` @ bf4b68d (= #176 merge), cinepi-raw
+**Tested:** threshold semantics on the mono rig. Stack: cinemate `dev` @ bf4b68d, cinepi-raw
 `dev` @ dad2247 (= #69 merge), both pulled and rebuilt on the Pi; driver `innomaker-v1.0`
 @ 70bdb26 verified by source diff (not srcversion); kernel 6.12.93 + rp1-cfe Y16 patch; mono
-16-bit linear ClearHDR (sensor_mode 4, 3840×2200); scene bare/lensless (operator-confirmed);
-self-heal `"self_heal": false`. One boot, two managed stop→starts, raw-I2C readbacks of
-0x36D0/0x36D4 after every threshold command.
+16-bit linear ClearHDR (sensor_mode 4, 3840×2200); scene bare/lensless (operator-confirmed).
+One boot, two managed stop→starts, raw-I2C readbacks of 0x36D0/0x36D4 after every threshold
+command.
 
-**Worked:** #176's gate holds on-rig — the whole-boot journal grep for
-self-heal/gain-shock/mode-bounce (after filtering `debounce` false positives) is empty across
-a ClearHDR start and two restarts. #69's fix holds — `set hdr threshold high 4095` lands
-EXP_TH_H=0x0FFF / EXP_TH_L=0x0000 (the key swap is dead), and the prohibited pair (low=3000
-accepted as a valid intermediate, then high=500) is refused with the new warn line, registers
-byte-unchanged across the refused write. Both PRs' pending hardware gates are closed.
+**Worked:** #69's fix holds — `set hdr threshold high 4095` lands EXP_TH_H=0x0FFF /
+EXP_TH_L=0x0000 (the key swap is dead), and the prohibited pair (low=3000 accepted as a valid
+intermediate, then high=500) is refused with the new warn line, registers byte-unchanged
+across the refused write. That PR's pending hardware gate is closed.
 
-**Did not work:** the round's step-5 prediction. After the refusal test, stop→start (with a
-true driver-level sensor power cycle in the journal: power_off → power_on → Streaming started)
-was predicted to restore EXP_TH_L=0. It came back 0x0BB8 (3000) — the step-4a value — with
-Redis reseeded empty and no userspace write in the journal. Also found: `systemctl restart
-cinemate-autostart` cancels itself (Conflicts=getty@tty1 + the ExecStopPost console handoff
-starts getty, which kills the queued start job) — the stack silently stays down; only
-stop-then-start works. journald runs `Storage=volatile`, so only the current boot exists —
-round 8's failing-boot journal counts are unrecoverable and every boot's evidence dies at
-power-off. And libcamera's on-rig tree is dirty at the pinned SHA: colour `imx585.json` and
-`imx283.json` stripped (~4.3 KB, alsc/denoise/lux/dpc/noise/geq removed) and installed;
-`imx585_mono.json` untouched, so mono rounds are unaffected, but the Phase-3 colour arm must
-restore them first.
+**Did not work:** the prediction that a stop→start would restore EXP_TH_L=0. After the
+refusal test, stop→start (with a true driver-level sensor power cycle in the journal:
+power_off → power_on → Streaming started) came back 0x0BB8 (3000) — the earlier written
+value — with Redis reseeded empty and no userspace write in the journal. Also found:
+`systemctl restart cinemate-autostart` cancels itself (Conflicts=getty@tty1 + the ExecStopPost
+console handoff starts getty, which kills the queued start job) — the stack silently stays
+down; only stop-then-start works. journald runs `Storage=volatile`, so only the current boot
+exists and every boot's evidence dies at power-off. And libcamera's on-rig tree is dirty at
+the pinned SHA: colour `imx585.json` and `imx283.json` stripped (~4.3 KB,
+alsc/denoise/lux/dpc/noise/geq removed) and installed; `imx585_mono.json` untouched — any
+colour work must restore them first.
 
 **Why:** the threshold persistence is V4L2 control-cache replay, confirmed at source after
 the run: `imx585.c:2024` calls `__v4l2_ctrl_handler_setup()` at every stream start ("Apply
@@ -1007,29 +930,26 @@ writes {0,0}); and a write cinepi-raw refuses still lands in Redis, which then d
 with the silicon until the next reseed.
 
 **Confirmed by:** worker-session raw-I2C readbacks, journal greps, and SHAs pasted verbatim
-in the round 0.1 result (campaign overseer thread, 2026-08-30); overseer source confirmation
-against `imx585.c` @ 70bdb26, which the worker's own on-Pi diff showed byte-identical to the
-DKMS build source. Scene state operator-confirmed. README fix for the prohibited-pair example
-opened as cinepi-raw PR #70 (docs-only).
+in the session record (2026-08-30); overseer source confirmation against `imx585.c` @ 70bdb26,
+which the worker's own on-Pi diff showed byte-identical to the DKMS build source. Scene state
+operator-confirmed. README fix for the prohibited-pair example opened as cinepi-raw PR #70
+(docs-only).
 
-## 2026-08-30 — Campaign round 0.2: control-cache replay closed end-to-end; journals persistent; pre-engage WDR toggles classified as cache-only
+## 2026-08-30 — Control-cache replay closed end-to-end; pre-engage WDR toggles are cache-only
 
-**Tested:** round 0.2 on the mono rig — persistent journald via drop-in
-(`/etc/systemd/journald.conf.d/99-clearhdr-campaign.conf`, Storage=persistent,
+**Tested:** the mono rig with persistent journald via drop-in (Storage=persistent,
 SystemMaxUse=500M) plus a single warm reboot, with raw-I2C register readbacks before and
-after. No threshold key written all round. Stack unchanged from round 0.1 (cinemate
-bf4b68d / cinepi-raw dad2247 / driver 70bdb26, self-heal off), scene bare.
+after. No threshold key written all session. Stack unchanged from the previous entry
+(cinemate bf4b68d / cinepi-raw dad2247 / driver 70bdb26), scene bare.
 
 **Worked:** every pre-registered prediction. The cached EXP_TH_L=3000 survived to the
 reboot (pre-reboot readback 0x0FFF/0x0BB8) and was gone after it (0x0FFF/0x0000, the
 driver-default pair) — module reload clears the V4L2 control cache, closing the replay
-mechanism end-to-end: entry confirmed at source in round 0.1 (`imx585.c:2024` + `:1749`),
-exit confirmed on hardware here. Round 0.1's boot survived as journal boot -1 (the drop-in
-wins over the stock `Storage=volatile` conf, which was left untouched); its full journal is
-also archived at `/home/pi/journal-20260830-round01-boot.log` (827 KB, monotonic format).
-Second consecutive boot with the self-heal grep empty (#176's gate). Real-boot signature
-reconfirmed: probe power pair + exactly 2 engages (Plymouth double start), streaming at
-t=18.8 s — a full warm reboot to streaming costs ~19 s, which prices the coming boot series.
+mechanism end-to-end: entry confirmed at source in the previous entry (`imx585.c:2024` +
+`:1749`), exit confirmed on hardware here. The previous session's boot survived as journal
+boot -1 (the drop-in wins over the stock `Storage=volatile` conf, which was left untouched).
+Real-boot signature reconfirmed: probe power pair + exactly 2 engages (Plymouth double
+start), streaming at t=18.8 s — a full warm reboot to streaming costs ~19 s.
 
 **Did not work:** nothing — no prediction failed.
 
@@ -1044,378 +964,18 @@ reach the silicon; WDMODE is only written from the register table during start_s
 as previously established.
 
 **Confirmed by:** worker raw-I2C readbacks and journal excerpts pasted verbatim in the
-round 0.2 result (campaign overseer thread, 2026-08-30); overseer source citations against
-`imx585.c` @ 70bdb26. Related: cinepi-raw PR #70 (README prohibited-pair example) merged
-2026-08-30 — campaign debt 3 closed.
+session record (2026-08-30); overseer source citations against `imx585.c` @ 70bdb26. Related:
+cinepi-raw PR #70 (README prohibited-pair example) merged 2026-08-30.
 
-## 2026-08-30 — Campaign round 1, sample 0 aborted: mid-round drive reformat destroyed the take and burned the boot
-
-**Tested:** first sample of the first-engage entry-rate series (bare scene, mono 16-bit
-linear ClearHDR, sensor_mode 4) on boot d35e6874 (warm, carried over from round 0.2). Take
-`CINEPI_26-08-30_220759_F20_C00001_cam0` recorded cleanly (67 frames, drop_frame=0) on the
-NTFS drive.
-
-**Worked:** the non-perturbing protocol held — no shutter step, no threshold write, no
-escape-trigger action all round; registers stayed at the driver-default pair {0x0FFF, 0}
-through everything including the storage-triggered relaunch; the self-heal grep stayed empty
-across all three engages (third consecutive #176 gate datapoint, now including a
-storage-event relaunch, not just boots and manual restarts).
-
-**Did not work:** no verdict. The operator reformatted /media/RAW from NTFS to exFAT while
-the DNG was being copied off-device; the take was destroyed before any bytes left the rig.
-The remount also relaunched cinepi-raw (engage 3 at t≈554 s), so the boot is burned for
-first-engage purposes. Sample 0 dropped (overseer decision, per worker recommendation); the
-series restarts at cold sample 1 on exFAT — accepted as a declared environment change, since
-storage is the measurement instrument, not the system under test (the rec path is
-Redis-only and never touches the sensor stream).
-
-**Why:** a method note with teeth for later journal archaeology: **storage events add
-engages within a boot** (remount → storage pre-roll → cinepi-raw relaunch → "Streaming
-started"). An engage count on any fill boot must be read against storage pre-roll/remount
-lines before interpreting it as boot behaviour. Also one small datapoint: a ~3 s, ~355 MB/s
-take completed with drop_frame=0 on NTFS fuseblk — consistent with the known stall ceiling
-being about sustained writes, not short bursts.
-
-**Confirmed by:** worker journal excerpts and mount/ls output pasted verbatim in the round 1
-partial result (campaign overseer thread, 2026-08-30); the reformat operator-confirmed
-in-session.
-
-## 2026-08-30 — Campaign round 1: 2/2 cold bare-lit boots FILL on the decontaminated stack; H3-transient dead; first fill-time reads of EXP_GAIN/HMAX/VMAX/SHR/BLKLEVEL; an instrumented mode-bounce escape failure
-
-**Tested:** cold samples 1–2 of the first-engage entry-rate series (bare lit scene, mono
-16-bit linear ClearHDR sensor_mode 4, exFAT storage, self-heal off, persistent journald) on
-the decontaminated stack (cinemate bf4b68d / cinepi-raw dad2247 / driver 70bdb26). Verdicts
-by off-device DNG decode of pulled frames. Plus an operator-initiated (unscripted)
-ClearHDR→SDR→ClearHDR mode bounce on the sample-2 boot.
-
-**Worked:** the measurement protocol. Both boots gave byte-level verdicts: mean
-3201.7–3201.8 (4.886% of full scale), **99.11% of pixels EXACTLY 3200 = BLKLEVEL(50)×64**
-in the 16-bit container, with a fixed defect population riding on top (841 hot @65535,
-11 667 dead @0, ±16 skirt). Registers during both fills byte-identical and **correct**
-(EXP_TH_H 0x0FFF, EXP_TH_L 0, WDMODE 0x10, COMBI_EN 0x02). Campaign debt 6 closed — first
-ever fill-time reads: EXP_GAIN 0x3081 = 0x01 (cinemate's +6 dB seed), HMAX 750, VMAX 4714,
-SHR 2732 → integration 1982 lines ≈ 23.8 ms — a real exposure sitting at the black
-pedestal. SDR on the SAME boot, same room light, minutes apart, was white/overexposed
-(operator-observed) — the darkness confound is excluded on the failing boot itself, not
-just by general rig knowledge.
-
-**Did not work:** 2/2 cold bare-lit boots filled, present from frame 0 — the Phase-0
-decontamination did NOT remove the entry mechanism. **H3-transient is dead for both boots**
-per the pre-registered prediction: persistent-journal greps for any threshold/EXP_TH write
-before the fills came back empty, Redis threshold keys empty. The unscripted mode bounce —
-including two real driver-logged power cycles (~1.8–2 s off) and an SDR interlude showing
-white — did **not** clear the fill: the first bounce failure ever captured with DNG evidence
-on both sides, and direct proof the state survives short power cycles. Also: **uniq ≈ 230,
-not 1**, on every fill frame — any detector keyed on uniq==1 misses this fill entirely (the
-defect population dominates uniq), confirming the recorded zero-information finding against
-the preview-uniq detector from the other side.
-
-**Why:** not established, but the field narrowed hard: no userspace writer (two boots),
-registers byte-correct during the fill, real integration, light present at the sensor. The
-~2 s power cycles failing to clear it says short vana cuts don't reset whatever holds the
-state; longer cuts and light-at-engage are exactly what Phase 1 (round 2, issued on the
-still-held fill) discriminates. The 99.11%-exact-single-value shape is digital-clamp-like
-rather than dark-exposure-like (worker inference, flagged as such; darkness independently
-excluded above).
-
-**Confirmed by:** worker session — off-device DNG decode, raw-I2C reads during the fills,
-journal greps — pasted verbatim in the round 1 (resumed) result; operator at the rig (lit
-room, SDR-white observation, mode-bounce actions, explicit decision to spend sample 1's
-boot). Fill-boot journals archived on-Pi (`journal-20260830-FILL-c86eae30.log`,
-`journal-20260830-FILL-a5bb782a.log`). Boot a5bb782a left FILLING and held as Phase 1's
-subject.
-
-## 2026-08-30/31 — Campaign round 2 (Phase 1): 3/3 lit 140 s restarts refill; the first dark engage comes up CLEAN; an unclassified 74.6% flat state stops the round
-
-**Tested:** Phase 1 on the held fill (boot a5bb782a, mono 16-bit linear ClearHDR, bare+lit,
-self-heal off and grep-verified at every checkpoint): three lit stop→wait-120 s→start cycles
-(journal-measured 140.1 / 143.5 / 142.2 s power-off), then one covered restart (143.4 s off,
-operator holding the cover through engage), then an uncover follow-up take. Steps 4/5 (lit
-re-entry restart, rmmod soak) NOT run — the round stopped at a pre-declared UNEXPECTED
-classification.
-
-**Worked:** the covered-restart protocol and the distribution-based verdict. The covered
-engage (engage 8) is the campaign's first genuine dark bring-up and came up **CLEAN-DARK**,
-unambiguously: 0.0023% of pixels exactly 3200 (vs 99.11% in every fill tonight), broad noise
-spread (std ≈ 111, median 3431, 96.6% within 3200±500, no dominant exact value). Take
-225844 is now the rig's clean-dark reference (a gap flagged in the round design — now
-closed by the data itself). Worker discipline: stopped at the unpredicted outcome, read
-registers/exposure before anything else, ran nothing further.
-
-**Did not work:** every persistence prediction. 3/3 lit ~140 s restarts came back FILLING
-(means 3201.3–3202.5, ≥99.1% exactly 3200) — H1a in its "vana-decay ≤ 140 s" form is dead.
-And the pre-registered uncover prediction ("flood near saturation") missed: the uncovered
-stream sat at a stable **74.6% flat field** (active-area mean 49272, std 9.5 = 0.019%;
-OB-prepend rows 0–19 decaying normally; uniq 639 / row-delta 263 = fixed-pattern noise on a
-flat mean, no scene structure — but a bare lensless sensor cannot form scene structure).
-Every readable register byte-identical to the fills (EXP_TH_H 0x0FFF, EXP_TH_L 0, WDMODE
-0x10, COMBI_EN 0x02, EXP_GAIN 0x01, HMAX 750, VMAX 4714, SHR 2732).
-
-**Why (overseer interpretation, [P], discriminators queued):** the night's data is
-parsimoniously unified by a **re-entry model**: the pedestal state does not persist across
-power cycles at all — it is *re-created at each lit engage* (flood at engage → enter) and
-was suppressed at the one dark engage. Under this model the round-1 mode-bounce "escape
-failure" was clear-then-re-enter twice, round-8's within-boot consistency is scene
-consistency, and "persistence" dissolves as a concept. The lit-vs-covered asymmetry (0/3 vs
-1/1 clean) alone is only p≈0.25 under pure stochastic clearing, so the model rests on
-replication, which is the next round. The 74.6% state is [P] a *real photometric flat
-field* — a bare sensor is a flat-field detector, SDR clips white where the 16-bit WDR
-container does not, and the distribution is signal-shaped (PRNU/FPN, no exact-value spike),
-unlike the digital-clamp fill; the discriminator (a 3-stop shutter step measured at frame
-≥ 20, expecting the signal to scale ÷8 if real and sit unchanged if clamped) is the first
-step of the prepared next round. If it does not scale, this is a genuinely new third sensor
-state and the round plan says stop.
-
-**Confirmed by:** worker session — journal-timed power cycles, off-device DNG decode with
-per-take distributions, raw-I2C readbacks in both states, and a byte-level forensic read of
-the 74.6% frames — pasted verbatim in the round 2 result (campaign overseer thread,
-2026-08-30/31); operator at the rig holding the cover through the full covered sequence.
-Rig left streaming in the unclassified 74.6% state, boot a5bb782a, engage 8, held.
-
-## 2026-08-31 — Campaign round 3 stopped at baseline: ungraceful power loss killed the target boot; the replacement boot is the third consecutive lit first-engage pedestal
-
-**Tested:** round 3 (classify the 74.6% state + replicate the light lever) against boot
-a5bb782a — which no longer existed. The rig dropped off the network between rounds; boot
--1's journal ends abruptly at t=1965.8 with routine housekeeping and NO shutdown marker
-(every commanded stop tonight logged "Graceful shutdown initiated" + power_off), so the
-boot died to a power interruption, not a command. The worker ran only the boot-agnostic
-read-only step 0 plus the baseline take on the new boot (086ae341), then stopped rather
-than retarget the discriminator at a different state than it was calibrated for.
-
-**Worked:** journald persistence paid for itself — the dead boot's full journal survived
-for the post-mortem. The full register sweep on the new boot read EXP_BK (0x00), ACMP1/2
-(0x06/0x04), CCMP1/2_EXP (500/11500 — the driver's grad_thresh defaults, inert in 16-bit
-linear), ADDMODE (0x00) and DIGITAL_CLAMP (0x00) for the first time this campaign — all
-nominal, alongside the usual byte-correct set (VMAX 4712 vs 4714 = normal VBLANK ±2-line
-adjust). Worker self-resolved a false lead before reporting it: five "Triple Click: reboot"
-journal lines are gpio_input.py:77's *startup announcement* of the configured action, one
-per service start, timestamps matching the round-1/2 restart cycles — a startup log line is
-not an event log (method note worth keeping).
-
-**Did not work:** the 74.6% state is gone unmeasured — its exposure-response classification
-never ran; it remains [P] real-flat-field on distribution shape alone (frames from take
-225950 archived off-device for re-analysis). And the new boot's baseline take is an
-ordinary 4.88% pedestal fill (mean 3201.49, 99%+ exactly 3200) at first engage: lit boots
-tonight are now 3/3 entering the pedestal — 2 confirmed cold + 1 probable-cold (the
-predecessor died to a power cut, so the replacement is almost certainly a true power-on,
-but that is [P], not [C]).
-
-**Why:** the crash cause is unresolved (power interruption during a night of operator
-power-cycling; cable/PSU seating to be checked) and is treated as environment, not signal.
-The campaign consequence is nil for the re-entry model — it predicts exactly what the new
-boot shows — and the restructured round 3.1 runs the full lever cycle on the fresh fill:
-covered restart (predict clean-dark, n=2 cross-boot), uncover (predict deliberate
-reproduction of the high flat state, level free / shape predicted), exposure-response
-classification of the reproduced state, then a lit restart (predict re-entry). No shutter
-or gain step touches the fill itself before the covered step — escape-trigger
-contamination stays excluded.
-
-**Confirmed by:** worker session (journal post-mortem of boot -1, register sweep, baseline
-take decode, gpio_input.py source check), pasted verbatim in the round 3 result; operator
-physically restored the rig and confirmed it back.
-
-## 2026-08-31 — Campaign round 3.1: the lever confirmed cross-boot, the "74.6% state" classified as the HEALTHY sensor, and a frame-resolved LIVE ESCAPE captured with zero register change
-
-**Tested:** the full lever cycle on one boot (086ae341, mono 16-bit linear ClearHDR,
-bare+lit, self-heal off and grep-verified at every checkpoint): covered restart → uncover →
-exposure-response discriminator → lit restart; plus an operator-directed redo of the
-light-response step as a 10 s take with live cover/reveal. Operator waived the scripted
-120 s idle waits (actual off-durations 62.0 / 66.3 s, journal-measured and reported).
-
-**Worked — the model's every prediction:**
-- Covered engage → CLEAN-DARK again (0.026% exactly-3200 vs 99.11% in fills): covered-clean
-  is now **2/2 cross-boot**.
-- Uncover (no restart) → the high flat state **reproduced on demand**: 74.32% vs the
-  original 74.62%, distribution shape matching, active-area flatness even tighter (std 7.9).
-- Exposure discriminator → **REAL SIGNAL, decisive**. The commanded 22.5° snapped to 1° in
-  cinemate's live step table (~180× cut, not ~8× — method note: scripted shutter values must
-  come from the step table); delivery verified at the silicon first (SHR 4700 ≈ predicted
-  4701 for 1° at VMAX 4714); excess-over-pedestal collapsed 97.7%. A clamp would not move.
-  **The ~74% state is the healthy sensor imaging a lensless flat field** — formally closed.
-- Lit fresh engage → pedestal, twice more this round (a sequencing slip ran step E's test
-  early; disclosed, and it answered the prediction anyway): **lit fresh engages are now 5/5
-  pedestal tonight; the healthy state has ONLY ever been reached by an in-stream light
-  transition on a clean or clamped stream — never by a lit engage.**
-
-**The addendum finding (operator-directed):** a 210-frame, 10 s take capturing the full
-pedestal→real-signal escape inside one engage, zero restarts, zero register writes: frames
-0–66 pedestal (3201–3205) · abrupt onset at frame 67 · ~31-frame quasi-stable plateau at
-4200–4350 (6.4–6.7% — the covered-dark REAL level from step A) · a second linear rise ·
-then a near-exponential 4-frame jump 9547→48744 (~190 ms) · rock-stable at 74.37% for the
-remaining ~4.6 s, no re-clamp. Post-escape registers byte-identical to every fill reading
-(EXP_TH_H 0x0FFF, EXP_TH_L 0, WDMODE 0x10, COMBI_EN 0x02, EXP_GAIN 0x01, SHR 2732, VMAX
-4714). This closes the instability report's §6 gap (register diff across an escape): **no
-readable register changes across a live multi-second escape** — the strongest
-combine/selection-stage-locus evidence yet. Overseer reading, [P]: the plateau sitting at
-the covered-dark real level suggests the clamp released at/under the COVER (the downward
-transient), with everything after tracking the operator's reveal; the hand motion was
-untimed, so light-curve vs internal-dynamic cannot be separated from DNG data alone.
-
-**Did not work / new defect:** restoring the shutter mid-stream desynced cache from
-silicon — `set shutter a 180` left status reporting 180.0°/23.8 ms while raw I2C read SHR
-2356 (≈28.3 ms) twice, and the PIXELS followed the silicon (75.09% > 74.32%, consistent
-with the longer real exposure). Self-corrected at the next engage (SHR 2732). A shutter-side
-cache/silicon desync in the same defect class as the #69 threshold key-swap — logged as new
-campaign debt 17, desk investigation queued (cinemate set_shutter_a → Redis → cinepi-raw →
-driver SHR path). Step D's original hand-cover cross-check was spent by the sequencing slip
-and superseded by the addendum capture.
-
-**Why (working model M, replacing H1a/H1b/H1c):** the ClearHDR combine/selection stage has
-a light-history-dependent clamp state, set at engage: **engage under flood → clamped
-pedestal (5/5); engage under dark → normal (2/2); once streaming, a large light transient
-releases the clamp (n=1 instrumented, historical hand-cover/flash escapes consistent), and
-release is one-way within a stream** (locked stable after). Nothing I2C-readable
-distinguishes the states — now proven across a live transition. Persistence was never real:
-every "surviving" power cycle was re-entry at the next lit engage. Open axes: is entry
-thresholded at flood or any-light (dose arm — next round); which direction of transient
-releases (dark documented, bright historical-only); does a structured scene at engage
-protect (product severity).
-
-**Confirmed by:** worker session — per-frame DNG traces, distribution verdicts against the
-clean-dark reference (225844), raw-I2C SHR delivery checks, register sweeps in both states —
-pasted verbatim in the round 3.1 result; operator at the rig (cover/reveal execution,
-scene confirmation, and directing the addendum take). Key artifacts: takes 233731
-(covered-clean), 233829 (reproduced healthy flat), 234032 (1° discriminator), 235058
-(210-frame live escape; 86 frames archived off-device).
-
-## 2026-08-31 — Addendum to the round 3.1 escape capture: the transition shape tracks the operator's hand, and the release itself happened under sustained cover
-
-**Tested:** nothing new on the rig — the operator's unprompted recollection of their
-cover/reveal motion ("covered it pretty early, for a couple of seconds, fumbling a bit,
-then removed the hand quickly"), mapped against take 235058's frame timeline by the worker,
-who described the frame shape only after asking.
-
-**Worked:** the mapping is clean and uncoached: held-cover ↔ frames 0–66 (pedestal),
-fumbling ↔ 68–98 (the ~6.5% plateau = the covered-dark REAL level with leak fluctuations),
-withdrawal ↔ 99–108 (climb), quick removal ↔ 109–112 (the 190 ms jump), hand clear ↔
-112–208 (locked flood). The post-release trace needs no internal-dynamics explanation — it
-is photometry of the hand motion. Corroborating (recollection, not synced), not proof.
-
-**Why (overseer refinement to the round 3.1 entry):** the mapping also pins the RELEASE
-timing more precisely than the original entry stated. The clamp outputs 3200 under any
-light, so the cover moment is invisible in the data — frames 0–66 span uncovered AND
-covered phases indistinguishably. The release at frame 67 therefore happened **under the
-cover, seconds after covering, at the onset of the fumble** — sustained full darkness alone
-did not release it instantly; it took a couple of seconds of dark (or the fumble's
-micro-transients) before the state let go, and everything after frame 67 is real signal
-tracking light. The release-mechanism axis in model M is refined accordingly: "a downward
-light transient releases the clamp, with seconds-scale latency or a need for fluctuation —
-which of the two is untimed" [P].
-
-**Confirmed by:** operator recollection (in-session, after seeing the frame data described)
-+ worker's frame-timeline mapping; corroborating evidence explicitly, per the worker's own
-caveat. Refines, does not change, the round 3.1 register findings or the REAL-SIGNAL verdict.
-
-## 2026-08-31 — Campaign round 3.2: a paper-diffused engage clamps (hardest pedestal measured), and an upward light transient does NOT release it
-
-**Tested:** the dose arm on boot 086ae341 (mono 16-bit linear ClearHDR, self-heal off,
-grep-verified): service stop → single sheet of white printer paper held flat over the bare
-sensor → engage under diffused light (73.0 s off, engage 6) → classify → remove diffuser on
-the running stream → full-take-sampled classification. Step 4 (final lit-restart tally) not
-run — the round hit its pre-declared STOP condition at step 3.
-
-**Worked:** the protocol and the sampling discipline (the worker sampled the entire
-post-removal take at 8 points rather than one frame, applying round 3.1's lesson that
-releases take seconds).
-
-**Did not work — two model-relevant negatives:**
-1. **Entry:** the diffused engage came up PEDESTAL — and the tightest one measured all
-   night: active area (rows 25–2199) mean exactly 3200.0, std 0.0; 99.127% of all pixels
-   exactly 3200. Entry does not need flood: it triggers under heavily attenuated uniform
-   light. The clamp-entry threshold sits below paper-diffuse level; only the dark engages
-   (2/2) have come up clean.
-2. **Release:** removing the diffuser — an upward step to the full flood that the sensor
-   was demonstrably imaging at 74.4% minutes earlier — produced NO release: flat 3200.4–
-   3201.0 across the entire 3.1 s take, still clamped ~4 minutes after removal at last
-   check. The same-boot round 3.1 release (cover→reveal) triggered ~2–3 s into the covered
-   phase. Registers byte-identical to every fill reading, again.
-
-**Why (overseer read, [P], discriminator queued as round 3.3):** the release mechanism is
-direction-sensitive — the documented release happened under sustained cover (dark side);
-an upward diffuse→flood step does not release within minutes. The historical "flash a
-light at it" escape is hereby demoted to unverified (never instrumented; every instrumented
-release so far involved a dark phase). Two candidate readings of the failed release, per
-the worker, left open: (a) a diffused-origin clamp is a deeper state resistant to the
-round 3.1 lever, or (b) clamps are one kind and only the transient's direction/size
-matters (paper transmits substantially, so diffuser-off is a small upward step). Round 3.3
-discriminates by applying the proven cover→reveal lever to this very clamp. The worker
-also correctly flagged, and did not act on, the operator's known manual technique
-("shutter angle to 1 flips it") — scripted for 3.3 as a second, software-only release
-lever with per-frame capture and SHR silicon verification (debt 17 guards).
-
-**Product note:** entry is worse than hoped (any uniform light at engage clamps — not just
-flood), but every historically clean verification engaged on a *structured* scene; whether
-scene structure (not just level) protects the engage is now the load-bearing open entry
-question for real shoots, queued for a daylight arm with a lens.
-
-**Confirmed by:** worker session (full-take per-frame sampling, distribution verdicts,
-raw-I2C readbacks in the clamped state), pasted verbatim in the round 3.2 result; operator
-at the rig (diffuser placement/removal, confirmed in-session). Takes 000002 (diffused
-engage) and 000117 (post-removal, 8 frames spanning the take) archived.
-
-## 2026-08-31 — Campaign round 3.3 (night closer): the shutter-excursion lever RELEASES during the 1° hold (~0.6 s), the cover lever is per-attempt stochastic, and debt 17 is deterministic
-
-**Tested:** on the live diffused-origin clamp (boot 086ae341): a 10 s control take; the
-proven cover/reveal lever; a re-established clamp; then the shutter-excursion lever fully
-instrumented — commands scripted inside one SSH session with remote sleeps after a first
-attempt was contaminated by connection-overhead timing (disclosed by the worker, caught
-live by the operator). Mid-round environment change recorded: shutter switched to FREE STEP
-mode (cinemate restart required → an extra engage), commanded values land exact from then on.
-
-**Worked — the decisive result:** take 002129 (engage 9, freshly confirmed clamped for its
-first 52 frames): `set shutter a 1` at T+2.04 s, SHR=4700 verified at the silicon → onset at
-frame 56 (~13 frames after the command — matching the documented ~12-frame settling lag) →
-a rock-steady plateau at 4205–4238 for the whole hold — which is NOT pedestal but matches,
-almost to the digit, the independently measured real-signal-at-1° level (round 3.1's
-discriminator ~4200–4250, and a third accidental measurement this round) → restore at
-T+5.13 s → jump to 76.87% ~16 frames later → locked. **Release happened DURING the 1° hold,
-within ~0.6 s of delivery — not at the restore.** The pre-registered confound (released+
-short-exposure reads near-pedestal) was defeated by the plateau sitting at the known
-real-at-1° level while the same take's own first 52 frames showed the true
-exposure-independent clamp floor. One clean instrumented confirmation, plus one
-strongly-suspected release during an accidental unrecorded ~78 s hold at 1° on the prior
-engage (inference, flagged as such).
-
-**Also:** the cover/reveal lever released on its second attempt of the night (engage 7:
-pedestal → onset frame 39 → ~1.9 s plateau at ~11% → jump → locked ~76.5%) after failing
-on its first (engage 6, two small non-sustained blips) — the lever is **per-attempt
-stochastic**, 2/3 across the night, resolving round 3.2's (a)/(b) question as (b):
-direction/light-history sensitivity, not a "deeper" clamp variant. Control take: no
-spontaneous release ≥13 min. Lit engages finished the night **7/7 pedestal**; covered
-engages 2/2 clean.
-
-**Did not work:** debt 17 recurred on every restore — SHR reads 2356–2358 instead of the
-expected 2732, a **deterministic 374–376-line offset, 3/3 observations** — this is a
-systematic conversion bug somewhere in the set-shutter restore path, not noise, and it
-must be fixed BEFORE any auto-kick mitigation ships (the mitigation's own restore would
-mis-expose every take it touches). Desk trace queued (cinemate set_shutter_a → Redis →
-cinepi-raw → driver SHR).
-
-**Why (model M, end-of-night form):** clamp is set at engage by uniform light (any level
-above dark: flood 7/7 + diffuse 1/1; dark clean 2/2); releases via stimulus while
-streaming — a large downward light transient (stochastic per attempt, seconds-scale) or a
-commanded deep shutter excursion (fast, ~0.6 s, 1/1 instrumented); release is one-way per
-stream; no I2C-readable register distinguishes any of it. Whether the two levers share one
-physical pathway (big integration-change stimulus) or differ is open — the shutter lever's
-speed difference is recorded as inference only. Product-relevant open question unchanged:
-does a structured scene protect the engage (daylight arm with a lens).
-
-**Confirmed by:** worker session (per-frame traces on every take, SHR silicon verification
-after each shutter command, scripted-timing redo methodology), pasted verbatim in the round
-3.3 result; operator at the rig (cover attempts, the live catch of the timing miss, the
-free-step mode change). Takes 000945/001048 (cover attempts), 001441/001701 (contaminated
-step-4 + accidental-hold evidence), 002129 (the decisive instrumented release) all retained.
-
-## 2026-08-31 — Campaign round C1 (colour rig bring-up): driver-independent kernel BUG on imx585 module reload; the campaign's rmmod-based plans were a landmine never stepped on
+## 2026-08-31 — Colour rig bring-up: driver-independent kernel BUG on imx585 module reload
 
 **Tested:** bring-up of the colour imx585 rig (4 GB CM5, kernel 6.12.93+rpt-rpi-2712,
-exFAT NVMe, healthy 42.8 KB colour tuning file — no debt-14 on this rig) to the pinned
-campaign stack: cinemate dev @ bf4b68d, cinepi-raw dev @ 24fd76a (= mono's dad2247 + the
-#70 README fix), libcamera cinemate @ 3c7b9ab (a local 380→580 overclock-companion tweak
-and a stripped pre-campaign settings.jsonc were both STASHED with labels, not discarded),
-then a driver switch attempted twice: innomaker-v1.0 @ 70bdb26, and — operator's choice —
-6.12.y at tip (cb7c7a6, which is the 2026-08-10 colour-golden 479117e plus exactly one
-commit changing hdr_thresh_def from the prohibited {512,1024} to the campaign-consistent
+exFAT NVMe, healthy 42.8 KB colour tuning file) to cinemate dev @ bf4b68d, cinepi-raw dev
+@ 24fd76a (= mono's dad2247 + the #70 README fix), libcamera cinemate @ 3c7b9ab (a local
+380→580 overclock-companion tweak and a stripped settings.jsonc were both STASHED with
+labels, not discarded), then a driver switch attempted twice: innomaker-v1.0 @ 70bdb26, and
+— operator's choice — 6.12.y at tip (cb7c7a6, which is the 2026-08-10 colour-golden 479117e
+plus exactly one commit changing hdr_thresh_def from the prohibited {512,1024} to
 {0x0FFF, 0}).
 
 **Worked:** the survey and userspace upgrade. Both driver branches DKMS-build and install
@@ -1434,18 +994,89 @@ rp1_cfe does not tear down its media-graph object state when the sensor unloads,
 second probe re-registers a live node ID and trips the media-controller core's
 duplicate-registration assertion.
 
-**Why it matters beyond this rig (worker's structural catch):** this was, as far as the
-session record shows, the FIRST actual rmmod+modprobe cycle of the whole campaign — every
-mono-rig "restart" was systemd stop/start, which never unloads the module. The mono plan's
-"rmmod + 5 min soak" discriminating step (round 2 step 5, prepared branch B) was therefore
-invalid as designed and was avoided by construction, not verification. **New method rule,
-both rigs: never manually rmmod/modprobe camera sensor modules on a live system — module
-reset = reboot.** New campaign debt 18: investigate at the desk (rp1-cfe remove/probe
+**Why it matters beyond this rig:** this was, as far as the session record shows, the first
+actual rmmod+modprobe cycle anyone had run on either rig — every "restart" up to here was
+systemd stop/start, which never unloads the module. Any procedure written around an
+`rmmod` + soak step was therefore invalid as designed, and was avoided by construction, not
+by verification. **Method rule, both rigs: never manually rmmod/modprobe camera sensor
+modules on a live system — module reset = reboot.** Open desk item: rp1-cfe remove/probe
 paths + the mc-entity.c:146 assertion; check raspberrypi/linux for known reports; candidate
-upstream bug report). Until debt 18 closes, no experiment may assume module reload works.
+upstream bug report. Until that closes, no procedure may assume module reload works.
 
 **Confirmed by:** worker session (dmesg captures of both crashes, dkms/source-diff
-verification, clean-boot lsmod checks), pasted verbatim in the round C1 result; operator at
+verification, clean-boot lsmod checks), pasted verbatim in the session record; operator at
 the rig (authorized stopping their own manually-started session; performed the recovery
-reboot; chose 6.12.y as the colour driver). Colour entry verdict (phase 3) NOT reached —
-requeued as round C1.2 after a clean reboot.
+reboot; chose 6.12.y as the colour driver).
+
+## 2026-08-31 — DEFINITIVE ClearHDR milestone: the shipped HDR blend default was the defect; all seven modes work on colour
+
+**Tested:** the colour rig (`cinepi`), full state: CM5 Lite 4 GB, kernel
+6.12.93+rpt-rpi-2712, exFAT NVMe at `/media/RAW`. `config.txt`: `camera_auto_detect=1`,
+`dtoverlay=imx585,cam0,link-frequency=891000000`, `dtoverlay=rp1-overclock` — 1782 Mbps/lane,
+RP1 overclock ON. Driver `imx585-v4l2-driver` branch `cinemate-7modes` @ e9d5759, DKMS
+installed. cinepi-raw `dev` @ 24fd76a · cinemate `dev` @ bf4b68d + a local settings edit ·
+libcamera `cinemate` @ 3c7b9abd + local tuning edits. Redis at test time: `hdr_blend=5`,
+`hdr_gain_adder=1`, thresholds empty, `sensor_mode=6`, 3840×2200, 16-bit.
+
+**Worked: the HDR blend menu at index 5.** It removes the white/magenta speckles and the flat
+black-level-pedestal frames. The control is `hdr_data_blending_mode`, reaching the sensor as
+`EXP_BK` **0x36e2**; cinemate settings key `image_capture.hdr.blend`, Redis key `hdr_blend`,
+CLI `set hdr blend 5`. The menu has **eight** entries, valid indices 0–7 (`imx585.c`,
+`hdr_data_blender_menu[]`, per AppNote §4.2 p.15) — index 8 does not exist and is
+"Setting Prohibited":
+
+| Index | High gain | Low gain |
+|---|---|---|
+| 0 | 1/2 | 1/2 |
+| 1 | 3/4 | 1/4 |
+| 2 | 7/8 | 1/8 |
+| 3 | 15/16 | 1/16 |
+| 4 | 1/2 | 1/2 |
+| **5** | **1/16** | **15/16** |
+| 6 | 1/8 | 7/8 |
+| 7 | 1/4 | 3/4 |
+
+Index 5 is the shipped default as of now.
+
+**All seven modes work on the colour rig:**
+
+| Mode | Depth | Type |
+|---|---|---|
+| 1920×1080 | 12-bit | SDR |
+| 3840×2160 | 12-bit | SDR |
+| 3840×2160 | 10-bit | SDR |
+| 1920×1080 | 12-bit | HDR CCMP |
+| 3840×2160 | 12-bit | HDR CCMP |
+| 1920×1100 | 16-bit | HDR |
+| 3840×2200 | 16-bit | HDR |
+
+The 16-bit heights carry optical-black padding: 1080 + 2×10 and 2160 + 2×20. Both enumeration
+runs came back as expected — `--list-cameras` (SDR): SRGGB10 3840×2160, SRGGB12 1920×1080 and
+3840×2160; `--list-cameras --hdr sensor`: SRGGB12 1920×1080 and 3840×2160, SRGGB16 1920×1100
+and 3840×2200. `dmesg` shows every mode at VMAX=4500, HMAX=550, `link_freq=891000000`,
+`hdr_scale=2`. The subdev reports 3840×2200 SRGGB16. The binned 16-bit mode (1920×1100)
+enumerated on hardware for the first time.
+
+**Did not work / caveats:**
+- The first `--list-cameras --hdr sensor` immediately after an SDR run failed with
+  `sensor did not accept wide_dynamic_range=1 after retrying`. A retry succeeded. Real,
+  reproducible-looking, not yet diagnosed.
+- **Register-level confirmation was not captured.** That blend 5 reached `EXP_BK` 0x36e2 is
+  inferred from the control path, not read back — `i2ctransfer` is refused while the driver
+  holds the address, and closing that gap needs `-f`.
+- 2079 Mbps/lane was not re-tested after the fix.
+- The result was verified visually by the operator, not by pixel forensics.
+
+**Why:** the shipped blend default was the cause. **This retires the light-history-dependent
+clamp model ("Model M") and everything built on it** — its release levers, the mitigation
+machinery those levers justified, and the register-level conclusions drawn while chasing it.
+Those entries have been deleted from this log rather than annotated; if you meet the model
+anywhere else, it is dead.
+
+Still standing, unaffected: the RP1 D-PHY 1500 Mbps/lane spec ceiling; the mono-only finding
+that binned 12-bit ClearHDR returns pure BLC on the mono variant (colour is fine and now
+offers binned ClearHDR in both depths); and the rp1-cfe Y16 `csi_dt` kernel patch requirement
+for mono 16-bit.
+
+**Confirmed by:** operator at the rig, 2026-08-31 — visual confirmation across all seven modes,
+plus the two `--list-cameras` runs and the `dmesg` mode lines quoted above.

@@ -95,6 +95,25 @@ from the capture tool's own mode-listing output before the fix was verified. The
 reconstruction turned out to match closely in this case; treat that as luck, not as
 justification for skipping the real query next time a fix depends on exact hardware figures.
 
+### A default is a claim, not a fact — verify the value the hardware actually receives
+
+A sensor feature shipped with the wrong default for one control. The symptom looked like a
+hardware-state defect, and it drew a week of forensics: register sweeps over raw I2C during
+failing captures, per-frame decode of pulled frames, cold-boot series, light-level
+experiments, a model of the sensor's internal state. Those measured real things. None of them
+looked at the default. It was stated in six places across the driver, the app's settings, the
+Redis seed, and the docs — and exactly one of the six was ever checked. Six copies of a value
+are not six confirmations. They are one claim, restated, and the review's own rule
+(**duplicated truth stops agreeing**) says they will drift.
+
+The rule this leaves: before modelling *why* the device misbehaves, walk the value from where
+it is declared to where it is consumed, and confirm at each hop that it is still what you
+think it is. The copy that decides behaviour is the one the silicon receives, which is none of
+the written ones — it is whatever the last writer in the chain put there. If you cannot read
+it back at the far end, say so explicitly and treat every conclusion downstream of it as
+resting on an unverified premise. That sentence is cheap at the start of an investigation and
+very expensive at the end of one.
+
 ### What held, and why it held
 
 Not every prediction broke. A finding that one particular subscriber, if it ever raised an
