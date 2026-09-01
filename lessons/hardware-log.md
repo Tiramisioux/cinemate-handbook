@@ -1080,3 +1080,28 @@ for mono 16-bit.
 
 **Confirmed by:** operator at the rig, 2026-08-31 — visual confirmation across all seven modes,
 plus the two `--list-cameras` runs and the `dmesg` mode lines quoted above.
+
+## 2026-09-01 — C0 format-drive control: regression re-check after settings-editor churn
+
+**Tested:** the settings editor's RAW-pane format control (`POST
+/settings-editor/api/raw/format`), on `dev`, after several rounds of unrelated churn to
+`settings_editor.py`/`.html` since the control was first hardware-verified at `e54e691b`
+on 2026-08-26 (control-row layout, phone stacking, the dotted action/command rule, the
+`free mode` → `free stepping` rename, and a hardening of the generic action catalogue's
+`format_drive` entry to `"no_arg": "required"`). This was a regression spot-check, not a
+re-run of the original destructive checklist.
+
+**Worked:** all three filesystems — exFAT, ext4, NTFS — still format and remount clean
+from the browser control. The churn since 2026-08-26 did not regress the feature.
+
+**Did not work / caveats:** the two facts the original 2026-08-26 run left unestablished
+were **not** captured in this pass either and remain open: which fstype string NTFS
+actually reports (`ntfs` / `ntfs3` / `fuseblk`), and how long a format holds the
+`_dispatch_lock`. A prior desk-only source read (no hardware access that session) had
+already found no code-level regression in the endpoint or the control's markup/wiring;
+this hardware pass is the first live confirmation since the churn.
+
+**Why:** the format endpoint itself was untouched by the intervening commits — only
+surrounding pane code changed — so a clean result here was expected, not surprising.
+
+**Confirmed by:** operator, 2026-09-01, on the Pi.
