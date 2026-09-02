@@ -1105,3 +1105,68 @@ this hardware pass is the first live confirmation since the churn.
 surrounding pane code changed — so a clean result here was expected, not surprising.
 
 **Confirmed by:** operator, 2026-09-01, on the Pi.
+
+## 2026-09-02 — C3 no-camera boot: main.py survives, the GUI thread does not
+
+**Tested:** CineMate booted on the Pi with **no camera ribbon attached**, on
+`feature/no-camera-start` at `fdff38f8` (C3.1–C3.9). The evidence is the startup journal
+plus the operator's description of the screen. Launch path was almost certainly a **manual
+foreground run** (`python3 src/main.py` / the `cinemate` alias) rather than
+`cinemate-autostart.service` — a bare `>` CLI prompt appears mid-stream in the log — so
+this pass does **not** exercise `ExecStartPre` and says nothing about the systemd path.
+
+**Worked:** `main.py` ran to completion. `--- Initialization Complete ---` was reached, the
+web GUI came up at `cinepi.local:5000` and served live values. C3.9's fix for the fatal
+`AttributeError` in `initialize_wb_cg_rb_array()` held — startup no longer aborts.
+
+**Did not work:**
+
+- The HDMI GUI never painted the `CAMERA NOT FOUND` message. Operator: *"i dont see the
+  warning message. it just gets stuck at the welcome message. web ui starts though."* The
+  journal shows `Exception in thread Thread-19` → `simple_gui.py` `run()` →
+  `populate_values()` → `AttributeError: 'CinePiController' object has no attribute
+  'file_size'`.
+- `ERROR: cinepi_controller  Failed to initialize wb_cg_rb_array: 'NoneType' object has no
+  attribute 'replace'` was **still present** after C3.9.
+- Stored operator state was overwritten: `Stored sensor mode 6 not available -- falling
+  back to mode 0`, `Changed value: fps_max = 1`, `Initialized fps_steps: [1]`.
+
+**Why:** three distinct mechanisms, all now established by source reading against this log
+and fixed on `feature/no-camera-start` (c3.10–c3.16):
+
+1. `self.file_size` is assigned in exactly one place, inside `_recompute_file_size()`, and
+   C3.1's own empty-`res_modes` guard returns *before* that assignment. The attribute
+   therefore never existed on a no-camera boot. C3.1 traded a `KeyError` at init for a
+   missing attribute later — strictly worse, because the failure moved into the GUI thread.
+2. `SimpleGUI.run()` was one `try: … finally:` around the whole loop with **no `except`**.
+   One bad frame ran `_teardown_display()` and ended the thread for the session; nothing
+   restarts it and nothing reports it, so the framebuffer keeps the last thing drawn — the
+   welcome message. The web GUI has no state of its own and freezes with it. This is the
+   real defect; the `file_size` bug was just the first thing to trip it.
+3. C3.9 fixed one `self.current_sensor.replace(...)` and missed a second, in the
+   tuning-file path. That one is inside the `try`, so it is caught — but it throws *before*
+   `ct_curve = default_ct_curve` is reached, so `wb_cg_rb_array` ends up `{}`. Its own
+   comment claimed the None "falls through to the generic default_ct_curve"; that was
+   false. `{}` is not a fallback: `set_wb()` then misses for every temperature and writes
+   nothing, so white balance had no curve at all.
+
+The state corruption is the same class C3.1 set out to prevent, applied inconsistently:
+C3.1 guarded `fps`/`fps_user` and stopped, while `sensor_mode` and `fps_max` are derived
+from the same empty mode table and were still being written back.
+
+**Two things this pass could not settle, and why they matter:**
+
+- **The systemd path is unverified.** Because the evidence came from a manual run, the
+  advisory `ExecStartPre=-` was never exercised. And the unit is *copied* into
+  `/etc/systemd/system/` by `sudo make install`, not symlinked — so a Pi updated by
+  `git pull` still has the strict gate, which fails the unit *before* `main.py` runs and
+  ends at a bare tty1 prompt with no CineMate error at all. Two different failures both end
+  at a tty1 prompt and must be told apart: a bare prompt with **no** red block means
+  `main.py` never ran (unit-file drift); a red `Cinemate crashed during startup` block then
+  a prompt means `main.py` raised before `systemd_ready()`.
+- **Whether the fixes hold** — the desk work is complete and the whole `_test/` suite is
+  green, but nothing here has been re-run on hardware yet.
+
+**Confirmed by:** operator, 2026-09-02 01:25 — startup journal plus the on-screen
+description quoted above. Desk analysis and fixes in `cinemate` commits c3.10–c3.16 on
+`feature/no-camera-start`; hardware re-verification still outstanding.
