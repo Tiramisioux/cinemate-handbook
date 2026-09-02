@@ -1211,3 +1211,86 @@ address them on real hardware rather than only in the desk tests.
 - **The wrong-`dtoverlay` case.** Only the no-ribbon case was exercised.
 
 **Confirmed by:** operator, 2026-09-02 — "great! it works!", on the Pi.
+
+## 2026-09-02 — web UI merge (feature/web-ui-combined) + cinepi-raw clean-preview fix, both hardware-verified
+
+**Tested:** two previously-desk-only pieces of work, on the live production unit
+(`pi@cinepi.local`, imx585). Both repos were switched away from the other in-progress
+session's branches (`cinemate` `feature/no-camera-start`, `cinepi-raw`
+`feature/c9-phase0-thumbnail`) for the session and restored afterward.
+
+1. `cinepi-raw` `fix/mjpeg-clean-preview` (`ca68ab9`) — the clean-preview port-8000 fix,
+   compiled and installed for the first time (`meson compile`, 51/51 targets, no errors).
+2. `cinemate` `feature/web-ui-combined` (`1ad88f4`, PR #184) — spot-checked against real
+   hardware rather than exhaustively, prioritising the claims the desk work could not settle
+   on its own.
+
+**Worked:**
+
+- **cinepi-raw:** both documented defects are fixed. `curl http://127.0.0.1:8000/` went
+  404 → 200 with the correct `multipart/x-mixed-replace` content-type; `/stream` at cold
+  start (process launch to first successful `200`) showed a clean `000` (port not yet bound)
+  → `200` transition in 2 of 3 timed runs, with real JPEG frames (SOI marker present,
+  ~885 KB/s) flowing on both endpoints simultaneously once up.
+- **cinemate, rec_tone GPIO fix:** ran `rec_tone_config()` against the Pi's actual
+  `settings.jsonc` (not a synthetic one) — resolves to the configured pin `[18]`, not the old
+  silent fallback to `pwm_pin` (19).
+- **cinemate, settings-editor page restore:** a real full HTTP reload to
+  `.../settings-editor/#clips` lands on the RAW pane, not Settings.
+- **cinemate, sensor-database path card:** renders the real resolved absolute path,
+  `/home/pi/cinemate/resources/sensors.json`.
+- **cinemate, download semaphore HEAD-leak fix:** 3 consecutive real `HEAD` requests against
+  the production Werkzeug server (not the Flask test client) all returned 200 — pre-fix, the
+  two-permit cap would have made the second one 429. A real ~928 MB partial download,
+  deliberately aborted mid-stream by the client, also recovered cleanly (3 more HEADs, all
+  200 afterward).
+- Both web pages (live GUI, settings editor) render with live real telemetry and no console
+  errors under `feature/web-ui-combined` against a real camera.
+
+**Did not work / had to work around:** `fix/mjpeg-clean-preview` could not be paired with
+`feature/web-ui-combined` for a full end-to-end cinemate boot. That cinepi-raw branch is cut
+from `origin/main`, which predates the `--max-pixel-rate` CLI flag; `sensor_detect.py` on
+`feature/web-ui-combined` always passes it, so `cinepi-raw --list-cameras --max-pixel-rate
+580.0` returned `unrecognised option` (exit 255) and empty stdout, `sensor_detect` got no
+camera at all, and `cinemate-autostart` failed with `Unknown camera model: imx585` even
+though the sensor itself was detected fine (`cinepi_multi`'s own separate detection worked).
+Confirmed by running `cinepi-raw --list-cameras` by hand, with and without the flag — the
+binary itself is healthy; this is a base-branch mismatch, not a defect in either fix. Worked
+around by pairing `feature/web-ui-combined` (cinemate) with `dev` (cinepi-raw, rebuilt) to
+test the cinemate-side claims, and testing the mjpeg fix in isolation by launching
+`cinepi-raw` directly rather than through cinemate's boot sequence.
+
+**Why:** the mjpeg fix's mechanism was already understood from source (nadjieb's `Publisher`
+only knows a path once something has been `publish()`ed to it; the fix registers both `/` and
+`/stream` with an empty buffer immediately after `streamer_->start()`, before the first real
+frame, so a client connecting early is accepted and waits rather than being 404'd) — this
+pass confirms that mechanism holds on the real binary against the real sensor, not just
+against the vendored header in isolation. The cinemate-side items were desk-verified against
+a Flask test client and a fake certificate; this pass re-ran the ones most likely to differ
+under the real threaded production server (the semaphore fix specifically depends on
+Werkzeug's real HEAD-response handling, which a test client does not reproduce faithfully
+without deliberate care) and confirmed they match.
+
+**One data point that didn't fit cleanly, named rather than dropped:** one of three
+cold-start timing runs on the mjpeg fix showed a single transient 404 immediately before the
+clean 200. Traced to nadjieb's `topics_` map having no mutex between the publisher thread and
+the listener/dispatch thread — a pre-existing property of that vendored dependency, not
+something this fix introduces (it only moves registration earlier, which shrinks any such
+window rather than creating it). Two of three runs were completely clean. Recorded as
+verified, not as fully closed — a reader chasing a similarly rare cold-start 404 later should
+know this was seen once and not fully explained by re-running alone.
+
+**Still not established by this pass:**
+
+- HTTPS end-to-end (the self-signed cert path, the same-origin preview proxy under TLS) —
+  desk-verified only, against a Flask test client and a locally-minted cert.
+- The folder-picker download client — needs a real desktop Chromium browser doing an actual
+  `showDirectoryPicker()` write, which this pass could not drive.
+- Free-stepping option greying and the EXPERIMENT drawer column layout — visual/interaction
+  claims, not exercised against the live GUI this pass.
+- Delete idempotency's double-tap scenario, and the GPIO tone fix as an actual electrical
+  signal on pin 18 (needs a scope or a wired tally light, not just the resolved config value).
+
+**Confirmed by:** operator, 2026-09-02 — "confirmed, write it up and merge into dev", after a
+live report covering all of the above. `cinemate` PR #184 (`feature/web-ui-combined` →
+`dev`); `cinepi-raw` `fix/mjpeg-clean-preview` (`ca68ab9`) pushed but not yet under a PR.
