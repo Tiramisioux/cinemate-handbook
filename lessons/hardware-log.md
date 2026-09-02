@@ -1170,3 +1170,44 @@ from the same empty mode table and were still being written back.
 **Confirmed by:** operator, 2026-09-02 01:25 — startup journal plus the on-screen
 description quoted above. Desk analysis and fixes in `cinemate` commits c3.10–c3.16 on
 `feature/no-camera-start`; hardware re-verification still outstanding.
+
+## 2026-09-02 — C3 no-camera boot: the c3.10–c3.16 fixes hold
+
+**Tested:** the same no-camera boot as the entry above, on `cinemate`
+`feature/no-camera-start` at `5c5c9bf3` (c3.10–c3.16 on top of current `dev`).
+
+**Worked:** all of it. The operator's verdict was "great! it works!". The HDMI GUI paints
+the `CAMERA NOT FOUND` message instead of freezing on the welcome screen, the web GUI is
+reachable and live, and the three mechanisms recorded in the previous entry are closed:
+
+- `file_size` now has an `__init__` default, so `populate_values()` no longer raises
+  `AttributeError` on the first frame and the GUI thread survives.
+- `SimpleGUI.run()` has per-iteration exception handling, so no single bad frame can end
+  the thread again — the general defect behind the specific one.
+- `initialize_wb_cg_rb_array()` reaches a real default `ct_curve` with no sensor attached,
+  so `wb_cg_rb_array` is populated rather than `{}`.
+
+**Did not work:** nothing failed. Two **presentation** changes came out of seeing it live
+(`c3.17`): the power warning's last line is now "BE SURE TO DISCONNECT POWER BEFORE
+CONNECTING/DISCONNECTING CAMERA SENSOR BOARD" — naming the board, which is the part that
+actually gets damaged — and the red `NO CAM` badge was removed from both GUIs, along with
+the placeholder in the CAM section, since the full-width message in the preview area is
+already unmissable.
+
+**Why:** the previous entry established the mechanisms; this pass confirms the fixes
+address them on real hardware rather than only in the desk tests.
+
+**Still not established by this pass** — do not read this entry as closing them:
+
+- **The systemd launch path.** As with the failing run, this was not confirmed to be a
+  `cinemate-autostart.service` boot, so the advisory `ExecStartPre=-` and the shortened 8 s
+  `camera-ready.sh` gate remain unverified in situ. The unit is *copied* by
+  `sudo make install`, so a Pi updated by `git pull` still has the strict gate.
+- **D4, the state-corruption fix.** `sensor_mode`, `fps_last`, `fps_user`, `fps` and
+  `fps_max` surviving a no-camera boot plus clean shutdown byte-identical was not measured
+  here. It needs `redis-cli mget` captured before and after and diffed, and then the real
+  proof: reattach the camera, power-cycle, and confirm the sensor comes back in the
+  **stored** mode rather than mode 0.
+- **The wrong-`dtoverlay` case.** Only the no-ribbon case was exercised.
+
+**Confirmed by:** operator, 2026-09-02 — "great! it works!", on the Pi.
