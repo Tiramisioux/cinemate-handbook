@@ -61,5 +61,5 @@ without re-deriving your correction.
 
 ## Further reading
 
-- `system-review/PI-VERIFICATION-QUEUE.md` — sixteen worked examples of this method, including several that needed more than one pass.
+- `system-review/PI-VERIFICATION-QUEUE.md` — seventeen worked examples of this method, including several that needed more than one pass.
 - The `cinemate-dev` skill — the deterministic session mechanics (start/wait/rec/copy/stop) this page's method runs on top of.

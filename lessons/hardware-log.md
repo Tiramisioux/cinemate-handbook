@@ -105,6 +105,31 @@ measurement, and was replaced with the real table before shipping.
 **Confirmed by:** operator-run session, `PI-RESULTS-2026-08-25.md`, PRs #135–#140 in the
 `cinemate` repo.
 
+## 2026-08-26 — `PI-VERIFICATION-QUEUE.md` grows to seventeen items: PI-017 added
+
+Not a test of the original sixteen — recorded so the file's total stays traceable, per this
+log's own append-only convention, rather than silently disagreeing with a later recount.
+
+**Tested:** nothing yet — this is the addition of a new queue item, not its resolution.
+B11.2 hardened `cinemate-install.sh` to explicitly install and enable `avahi-daemon` (plus an
+idempotent `/etc/hosts` fix), defending against F-289's assumed cause of the operator's
+original `cinepi.local`-does-not-resolve field report. Verifying B11.2 against real hardware
+at 192.168.2.6 (F-308) found `avahi-daemon` **already installed and running**, with
+`cinepi.local` already resolving before B11.2's step ran — so F-289's named mechanism did
+not reproduce, and the original report's actual cause is still open. PI-017 is that reopened
+question, added to the queue rather than silently left unresolved under a closed finding.
+
+**Why:** the missing variable is what the *client* that originally failed to resolve
+`cinepi.local` looked like (OS, network, mDNS resolver) — not recoverable from the Pi or from
+source, per PI-017's own procedure.
+
+**Not established:** PI-017 itself — verdict `unverified`, pending operator input on the
+original client. It is not part of the sixteen-item pass's five-contradicted tally (see
+[`what-the-pi-taught-us.md`](what-the-pi-taught-us.md)); it's a later, separate addition.
+
+**Confirmed by:** `system-review/FINDINGS.md` F-308 (B11.2 verification, 192.168.2.6,
+2026-06-18 image) and `PI-VERIFICATION-QUEUE.md` PI-017, both on `dev`.
+
 ## 2026-08-26 — F-283: removing `Conflicts=getty@tty1.service` is worse than the race it removes
 
 **Tested:** the fourth and last of the mitigations recorded in
@@ -1294,3 +1319,50 @@ know this was seen once and not fully explained by re-running alone.
 **Confirmed by:** operator, 2026-09-02 — "confirmed, write it up and merge into dev", after a
 live report covering all of the above. `cinemate` PR #184 (`feature/web-ui-combined` →
 `dev`); `cinepi-raw` `fix/mjpeg-clean-preview` (`ca68ab9`) pushed but not yet under a PR.
+
+## 2026-09-03 — correction to the 2026-08-29 GPIO10 entry: the pin-10 collision is no longer latent
+
+The 2026-08-29 entry above ("GPIO10 double-claim crashed cinemate at every boot") says the
+shipped double-claim on GPIO10 "is harmless only because the encoder ships `enabled: false`."
+That is no longer true of the shipped default. `a80bfbb9` (`chore(settings): port colour-rig
+control settings`, 2026-08-31) ported the operator's rig config into `settings.jsonc`,
+including `hardware_controls.rotary_encoders[0].enabled: false -> true` — a deliberate change
+("the rig has the GPIO rotary ... wired and in use"), not accidental churn. `buttons[1].pin =
+10` and `rotary_encoders[0].button_pin = 10` are unchanged, so the collision that entry
+described is now live in the shipped default on every fresh install, not merely latent behind
+a disabled flag.
+
+It no longer crashes on boot. `ComponentInitializer._claim_pin()` (`src/module/gpio_input.py`)
+— the fix that entry flagged as landed on `dev` but "not yet verified on hardware" — is still
+on `dev`, and `initialize_components()` processes `buttons` before `rotary_encoders`, so the
+rec button on GPIO10 claims the pin first and the encoder's button (`set_iso_lock`) is skipped
+with a logged warning instead of raising `GPIOPinInUse`. That skip path is still desk-verified
+only (the original entry's MockFactory reproduction); no session has confirmed on real hardware
+that a fresh install now boots clean with both default entries present and the encoder enabled.
+The shipped collision is also still worth fixing at the source (move one of the two pins)
+rather than continuing to rely on the skip silently dropping the encoder's button action.
+
+**Confirmed by:** reading `origin/dev` `settings.jsonc` (`a80bfbb9`) and
+`src/module/gpio_input.py` directly, 2026-09-03 — no hardware session.
+
+## 2026-09-03 — imx585 driver pin switch to `cinemate-7modes` verified on hardware
+
+**Tested:** the imx585-v4l2-driver branch switch prepared for the 3.4.0 release — the
+installer's `IMX585_DRIVER_REPO_REF` default moved from `innomaker-v1.0` to `cinemate-7modes`
+(seven modes: three SDR including a RAW10 all-pixel mode, and four ClearHDR including the two
+binned-HDR modes restored from `6.12.y` that `innomaker-v1.0` had dropped, plus 12-bit CCMP
+ClearHDR now default-on for colour sensors).
+
+**Worked:** the operator confirmed the branch works on real hardware.
+
+**Did not work:** nothing reported.
+
+**Why:** not established by this pass. The confirmation didn't come with a per-mode breakdown
+or mechanism, so this entry can only record that the switch works, not which of the seven
+modes (colour vs. mono, binned vs. all-pixel, 12-bit vs. 16-bit) were individually exercised.
+If a later session runs the modes one at a time, that detail should get its own entry rather
+than being backfilled here.
+
+**Confirmed by:** operator, 2026-09-03 — "the imx585 switch is verified to work," in the
+session that prepared the branch switch for the 3.4.0 release drift-fix pass (see
+`docs/release-3.4-drift-fixes` on `cinemate` and `cinepi-raw`).

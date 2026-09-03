@@ -2,18 +2,23 @@
 
 ## cinemate: the whole suite is portable
 
-`_test/` (~420 tests, ~2 seconds, nine `pip` packages, no Raspberry Pi) runs the same way
-locally and in CI, and passes identically on real hardware — this was directly verified: the
-same 381 passed / 241 subtests count on a laptop and on the Pi, zero skips either way. **There
-is no hardware-only subset today.** Keep it that way: a test that needs hardware cannot run
-in CI, and CI is the only thing that actually runs these tests at all.
+`_test/` (905 tests, 405 subtests, a few seconds, nine `pip` packages, no Raspberry Pi) runs
+the same way locally and in CI — reconfirmed directly against `origin/dev`. A 2026-08-23
+hardware pass (system-review's PI-002) matched the off-hardware run exactly at the time: 381
+passed / 241 subtests, zero skips either way. The suite has since grown roughly 2.5x without a
+repeat hardware pass, so treat "identical on the Pi" as confirmed at that earlier count, not
+today's — but nothing about *how* tests get added has changed, including the newer
+drift-guard tests (`test_installed_files_drift.py`, which checks `installed_files.py`'s
+`INSTALLED_FILES` list against the Makefile's own `install` target): still no camera, no live
+Redis, no GPIO. **There is no hardware-only subset today.** Keep it that way: a test that needs
+hardware cannot run in CI, and CI is the only thing that actually runs these tests at all.
 
-The house pattern is `unittest`, with hardware-only modules (`gpiozero`, `sugarpie`,
-`grove.adc`, `systemd`) stubbed via `sys.modules.setdefault` before the import under test.
-**Be careful with this pattern**: `sys.modules` is process-wide and nothing cleans a stub up
-afterward, so a stub installed by one test can silently decide what that module means for
-every test that runs after it in the same process. Collection order currently matters for
-this reason — see the comment in `.github/workflows/checks.yml`'s `pytest` job.
+The house pattern is `unittest`, with hardware-only modules (`gpiozero`, `sugarpie`, `smbus`,
+`grove.i2c`) stubbed via `sys.modules.setdefault` before the import under test. **Be careful
+with this pattern**: `sys.modules` is process-wide and nothing cleans a stub up afterward, so
+a stub installed by one test can silently decide what that module means for every test that
+runs after it in the same process. Collection order currently matters for this reason — see
+the comment in `.github/workflows/checks.yml`'s `pytest` job.
 
 **Write a test that fails against the unfixed code, and check that it does.** Every fix in
 the remediation that followed the system review was verified in both directions. A test that
@@ -24,8 +29,9 @@ passes against broken code is worse than no test.
 No `libcamera`, no Redis, no DMA/mmap buffers, no recorder threads — anything touching those
 needs a live take, not a unit test (see "What genuinely needs a Pi" below). What *is*
 testable: header-only pure functions and value logic — the DNG pixel packing/unpacking
-helpers in `dng_encoder.cpp`, the phase-lock core, the CCMP/log-LUT math. Several of these
-already have tests under `tests/`, following one consistent pattern:
+helpers in `dng_encoder.cpp`, the phase-lock core, the CCMP/log-LUT math. Eight of these
+already have tests under `tests/` (check `cinepi/meson.build`'s `test(...)` targets for the
+current count — CCMP12 work has added to it before), following one consistent pattern:
 
 - **Logic under test lives in a header** that a test translation unit can `#include` with no
   libcamera. If the logic you want to test is `static inline` inside a `.cpp` file, lift it

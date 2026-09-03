@@ -5,9 +5,9 @@ treating them as if they were is the mistake this page exists to prevent.
 
 | Surface | What it is | State model |
 |---|---|---|
-| 1. HDMI GUI | `simple_gui.py`, a `Thread` subclass rasterising via PIL to `/dev/fb0` | `populate_values()` — a single dict, roughly 70 live fields |
+| 1. HDMI GUI | `simple_gui.py`, a `Thread` subclass rasterising via PIL to `/dev/fb0` | `populate_values()` — a single dict, 85 fields (mechanically counted by `tools/gui_field_extract.py`, a lower bound: dynamically-built keys are invisible to it) |
 | 2. Web GUI | Flask + Socket.IO | **The same dict** — consumed verbatim |
-| 3. Settings editor | Flask, edits config | `settings.jsonc` + `config.txt` + a take listing — files on disk |
+| 3. Settings editor | Flask, edits config | `settings.jsonc` + `config.txt` + the RAW pane (`raw_files.py`, browse/download/delete/format) + the Playback pane (`playback.py`, per-clip DNG/WAV review) — files on disk |
 | 4. Recovery console | Standard-library-only, isolated on its own port | The same two files, plus systemd state and the journal |
 
 ## Surfaces 1 and 2 already share one state model
@@ -18,12 +18,21 @@ both surfaces the same way" — a question this project has explicitly asked its
 already half true, and the half that's true is the expensive half: a shared **state** model
 already exists. What's duplicated is **presentation** — colours, labels, and layout.
 
-Of roughly 70 fields, most reach the web template; the ones that don't fall into two groups:
-plain label text (accidentally duplicated as HTML text nodes, currently in agreement but one
-edit from drifting), and recording-integrity counts that the HDMI GUI shows as raw numbers
-and the web GUI shows only as latched pass/fail badges — a real capability difference, not
-an oversight, and worth confirming deliberately if you're touching that area rather than
-assuming parity.
+Of the 85 fields, 74 reach the web template (named verbatim in it); the 11 that don't fall
+into two groups: plain label text (accidentally duplicated as HTML text nodes, currently in
+agreement but one edit from drifting), and recording-integrity counts that the HDMI GUI shows
+as raw numbers and the web GUI shows only as latched pass/fail badges — a real capability
+difference, not an oversight, and worth confirming deliberately if you're touching that area
+rather than assuming parity.
+
+Dual-sensor rigs don't get a separate model either — `sensor_cam1`,
+`resolution_cam1`, `bit_depth_cam1`, `clip_name_cam1`, and the per-camera
+CineMate Log badges are just more entries in the same `populate_values()`
+dict, populated only when a second camera is actually present. The fields
+that pick which sensor(s) are on HDMI (`hdmi_preview_source`) and which
+sensor(s) are recording this take (`record_cams`) live the same way — see
+[`cinemate.md`](cinemate.md)'s dual-sensor section for why those two are a
+deliberately independent pair, not one field with two names.
 
 **Not all of it is recoverable from Redis.** A meaningful fraction of the shared dict is
 `SimpleGUI` instance state — VU smoothing, lock flags, display geometry — that never reaches
@@ -39,6 +48,14 @@ validate that an action button will actually resolve). That catalogue has existe
 hand-maintained copies before, and it has drifted — see
 [`../orientation/entry-points.md`](../orientation/entry-points.md)'s row on controller
 methods for the check that now guards it.
+
+**Their safety models for the same file diverge, though, and that's worth knowing before you
+touch either.** Both edit `config.txt`, but the settings editor's writer applies the change and
+reboots on a 0.4s timer with no confirm/revert window and no backup, while the recovery
+console's writer is opt-in (`allow_config_txt`, off by default) and holds a 300-second
+confirm-or-revert timer that restores the previous file and reboots again if nobody confirms.
+Don't assume parity between the two just because they touch the same file — see
+[`cinemate.md`](cinemate.md)'s web-app section for the fuller comparison.
 
 ## The residual hard problem is layout, not state
 

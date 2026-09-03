@@ -20,6 +20,31 @@ constructed keys. At least one such key is real and load-bearing: cinepi-raw pub
 per-camera-port readiness key built at runtime, and cinemate glob-scans for it to learn when
 each camera instance is up. It appears in neither registry and in neither side's docs.
 
+## ClearHDR live knobs and phase-lock: two undocumented key families
+
+Two key families exist as matched pairs on both sides — a `CONTROL_KEY_*`
+macro in `cinepi_state.hpp`, a `ParameterKey` entry in `redis_controller.py`
+— but aren't described anywhere else in this contract:
+
+- **ClearHDR live knobs**, new since the `cinemate-v3.3.2` release
+  (`cinepi_state.hpp` history: 2026-07-14/07-20) — imx585/imx708, applied
+  while streaming, no process restart: `hdr_threshold_low`/`hdr_threshold_high`
+  (HG→LG data-selection thresholds), `hdr_blend` (blend mode, driver menu
+  index), `hdr_gain_adder` (LG gain adder menu index). See
+  [`cinepi-raw.md`](cinepi-raw.md) for what each does to the image. `hdr`
+  itself (`ParameterKey.HDR`, "1 = ClearHDR active") is cinemate-side only —
+  it's set at process launch via `--hdr sensor`, not read back by
+  cinepi-raw over Redis.
+- **Phase-lock** (dynamic fps correction) — actually predates that release
+  (2026-06-11, three weeks before the tag) but was never documented here
+  either: `fps_phase_lock` (0/1), `pll_kp`/`pll_ki` (proportional/integral
+  gain), `pll_deadband_us` (phase-error deadband). `CinePiController.__init__`
+  applies one shared value to the single `fps_phase_lock` key, read from
+  whichever camera's `settings.jsonc` `phase_lock` field it checks first
+  (`cam0`, then `cam1`; default `true` on both) — so despite the per-camera
+  setting, there is one Redis key behind it, not two independently
+  switchable ones.
+
 ## Keys that look orphaned are not necessarily dead
 
 Static analysis found roughly a dozen cinepi-raw-side keys with no reference anywhere in

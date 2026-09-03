@@ -55,6 +55,73 @@ cached mental model of its internals; read the current file if you're changing p
 or metadata behavior. See [`../working/testing.md`](../working/testing.md) for what part of
 this *is* unit-testable (the packing helpers) and what genuinely needs a live take.
 
+## ClearHDR: sensor HDR, live knobs, and the CCMP12 decompand
+
+`--hdr off|auto|sensor|single-exp` (`cinepi_options.cpp`) selects sensor HDR
+at launch. On imx585/imx708, `auto`/`sensor` is ClearHDR — it switches the
+sensor to its 16-bit-linear HDR mode list, which requires a 12-bit camera
+mode (`--mode ...:12:P`; AE/AWB gate on 12-bit sensor stats and stop working
+above that).
+
+`core/options.cpp`'s `set_subdev_hdr_ctrl()` walks every `/dev/v4l-subdevN`
+looking for `V4L2_CID_WIDE_DYNAMIC_RANGE`, writes it, and **confirms the
+readback** rather than trusting the write call alone. If the sensor hasn't
+confirmed within 4 retries at 50ms, cinepi-raw now **throws and refuses to
+launch** — `"imx585/imx708 ClearHDR: sensor did not accept
+wide_dynamic_range=1 after retrying"` — rather than silently proceeding with
+the sensor's WDR combiner still off. That silent-proceed case was the
+invalid-combo defect (the driver serving a BLC pedestal fill while cinepi-raw
+believed ClearHDR was engaged) the ClearHDR stabilization work closed; see
+[`../lessons/hardware-log.md`](../lessons/hardware-log.md) for that
+investigation if the failure mode is unfamiliar. This hard-refusal is new
+behavior with no precedent in older builds — a rig that used to silently
+record pedestal fill now hard-fails at launch instead.
+
+Once launched, four knobs apply live over Redis with no restart —
+`hdr_threshold_low`/`hdr_threshold_high` (HG→LG data-selection thresholds,
+0..4095), `hdr_blend` (HG/LG blend mode, driver menu index) and
+`hdr_gain_adder` (LG gain adder menu index) — handled in
+`cinepi_controller.cpp`'s Redis callback map. Only the mode switch itself
+(`--hdr`) needs a process restart, because it changes the sensor's mode
+list; these four don't. See [`redis-contract.md`](redis-contract.md) for the
+exact key names.
+
+imx585's 12-bit ClearHDR path (the mono/binned variant) companders on-sensor:
+the 16-bit-linear signal goes through a three-segment piecewise-linear curve
+before a 12-bit code comes out. Written straight to a DNG as if linear, that
+data renders with the mid-tones crushed magenta — the defect is the transfer
+curve, not gain. `dng_encoder.cpp` embeds a `LinearizationTable` (built in
+`ccmp_lut.cpp`, gated by `ccmp_gate.hpp`) that undoes this inside the file, so
+a converter reading it sees linear data with no post step needed. The gate is
+exactly "ClearHDR on AND a *trusted* 12-bit sensor mode" — 16-bit ClearHDR
+never companded, and a 12-bit SDR mode never companded either, so gating on
+bit depth alone would decompand data that was never companded. "Trusted"
+matters because a mode-mismatch on this hardware has produced a 12-bit
+request landing on the real 16-bit sensor mode; `ccmp_gate.hpp` refuses the
+table rather than mislabel the file when that happened, and falls back to a
+loud warning plus uncorrected (magenta) linear 12-bit output instead.
+
+`ccmpPreviewStage.cpp` applies the same decompand to the lores buffer in
+place, inserted at the front of the post-processing chain, ahead of both
+preview stages — so HDMI, MJPEG, and the DNG thumbnail (which reads the lores
+stream) all inherit the fix for free without any of those three consumers
+being touched.
+
+## CineMate Log (`--log-encode`)
+
+`--log-encode [10|12]` (bare flag defaults to 12; the token grammar is parsed
+once in `log_encode_arg.hpp`, unit-tested directly in
+`tests/log_encode_arg_test.cpp`) re-encodes recorded DNGs through a log curve
+(`log_lut.hpp`) at launch. It's resolved in `dng_encoder.cpp`, the one place
+that already knows both the source bit depth and whatever CCMP decompand is
+in play, because the two compose: a 16-bit ClearHDR or 12-bit SDR stream is a
+valid log source directly, but 12-bit *companded* ClearHDR is only a valid
+source via composition — decompand to 16-bit linear FIRST, then apply the
+log curve; there is no such thing as a linear log curve fit to the companded
+12-bit domain itself. Today only `--log-encode 10` has a composed spec for
+the CCMP case; requesting `12` on a companded source refuses with an explicit
+error rather than emit an unmeasured file.
+
 ## Audio — a supervised child process, not a thread
 
 This is the part most likely to surprise a newcomer: **audio capture happens in a separate
@@ -86,6 +153,17 @@ Not audited in depth by the system review — noted, not traced. cinepi-raw uses
 vendor controls (`controls::rpi::ScalerCrops`, `controls::rpi::StatsOutputEnable`) that are
 not part of upstream libcamera and tie the build to the RPi fork; the zoom/crop path depends
 on `ScalerCrops` semantics surviving any libcamera version bump.
+
+`--max-pixel-rate` (`core/options.hpp`/`.cpp`, an upstream `rpicam-apps` option) is the other
+RPi-fork dependency worth knowing: `Options::Parse()` sets
+`LIBCAMERA_RPI_MAX_PIXEL_RATE` from it before `initCameraManager()` runs, the only channel
+into the forked libcamera IPA's PiSP pixel-rate ceiling — nothing later can change it, and
+cinepi-raw never computes the value itself. cinemate's `rp1_regime.py` derives it from
+whichever RP1 clock regime the board actually booted at (passed, not probed — the
+`rp1-overclock` overlay's requested 300MHz and the achieved 333.33MHz clock disagree, and a
+CM5 on this kernel has no `/proc/device-tree` node to read the real clock from anyway) and
+passes it down through `cinepi_multi.py`. Setting it above what the hardware can actually
+drain corrupts wide sensor modes silently — the option's own help text says so.
 
 ## Further reading
 

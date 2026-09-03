@@ -17,10 +17,14 @@ the entire contract between them — see [`architecture/redis-contract.md`](../a
 for the key set and the drift it has already accumulated. There is no RPC, no shared library,
 no other channel that matters day to day.
 
-**Neither repository pins the other's revision.** "Which cinepi-raw goes with which cinemate"
-is not recorded anywhere. Their `dev` branches can differ by thousands of lines, including
-keys in that shared contract — so when you're debugging a cross-repo symptom, check out `dev`
-on both sides before trusting either one's behavior in isolation.
+**Neither repository's revision is pinned to the other's, in practice.** `versions.env` exists
+so a tested pairing can be recorded, and `cinemate-install.sh` sources it — but both values ship
+empty by default, no pairing has ever been filled in, and the day-to-day update path
+(`cinemate-update.sh`) doesn't read `versions.env` at all; it just fast-forwards whatever branch
+is already checked out. So "which cinepi-raw goes with which cinemate" still isn't answered on a
+running system. Their `dev` branches can differ by thousands of lines, including keys in that
+shared contract — so when you're debugging a cross-repo symptom, check out `dev` on both sides
+before trusting either one's behavior in isolation.
 
 ## The rest of this handbook, in one sentence each
 

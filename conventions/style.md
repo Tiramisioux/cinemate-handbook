@@ -22,8 +22,8 @@ Don't introduce an intermediate composition layer without deciding that trade-of
 
 **The exception worth copying**: the recovery console is standard-library-only by a rule
 stated at the top of its own file, with the reason given in place — it exists to survive
-failure modes ("the venv is broken", "redis is down") that would kill anything importing
-more. When a module has a non-obvious constraint, say so at the top like that.
+failure modes ("cinemate's Python packages are missing or broken", "redis is down") that would
+kill anything importing more. When a module has a non-obvious constraint, say so at the top like that.
 
 ## Threading — two shapes, not interchangeable
 

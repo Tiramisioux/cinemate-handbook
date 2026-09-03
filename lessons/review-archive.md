@@ -5,10 +5,15 @@ when a handbook page's citation isn't enough. It doesn't restate the findings â€
 one thing this handbook is built specifically not to do (see the handbook
 [`README.md`](../README.md)).
 
-`system-review/` is a **dated archive with evidence**: an eleven-session audit (193 findings)
-plus the remediation and hardware verification that followed. This handbook is **stable,
-curated, forward-looking guidance**. When you're reading a handbook page and want the
-underlying evidence, come here.
+`system-review/` is a **dated archive with evidence**: an eleven-session audit (228 findings)
+plus the remediation and hardware verification that followed. The findings total grew past
+the audit's original 193 during that remediation â€” later batches (B10.1 onward) appended new
+entries as fixes surfaced further issues; `FINDINGS.md` is append-only, so the growth is
+traceable row by row rather than a renumbering. See
+[`../conventions/checks-and-ci.md`](../conventions/checks-and-ci.md)'s
+`findings_disposition_check.py` entry for the check that now guards the total. This handbook
+is **stable, curated, forward-looking guidance**. When you're reading a handbook page and want
+the underlying evidence, come here.
 
 ## If you want...
 

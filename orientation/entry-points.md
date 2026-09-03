@@ -5,13 +5,13 @@ edit** somewhere else that nothing reminds you about. This table's fourth column
 point of the page. Where it says "nothing", you are on your own: no check exists, and that is
 where drift has historically appeared.
 
-Four drift checks exist and run in CI — see
+Six drift checks exist and run in CI — see
 [`../conventions/checks-and-ci.md`](../conventions/checks-and-ci.md) for what they gate.
 
 | Adding / changing | Primary edit | Also update | Caught by |
 |---|---|---|---|
 | A Redis key | `redis_controller.py`'s `ParameterKey` enum | cinepi-raw's `CONTROL_KEY_*` if it crosses the boundary; `docs/redis-keys.md` | `tools/redis_key_diff.py` (ratchet, cross-repo side) |
-| A controller method / new action | A public method on `CinePiController` | **Four places**: `cli_commands.py`'s command table, `app/settings_editor.py`'s action catalogue (Python **and** its JS copy), `docs/controller-methods.md` | `tools/gui_field_extract.py` (gated at 0) |
+| A controller method / new action | A public method on `CinePiController` | **Five places**: `cli_commands.py`'s command table, `app/settings_editor.py`'s action catalogue (Python **and** its JS copy), `docs/controller-methods.md`, and any `"method"` string under `settings.jsonc`'s `hardware_controls`/`input_peripherals` (buttons, switches, rotary encoders) | `tools/gui_field_extract.py` (gated at 0) checks the settings-editor catalogue only; `tools/docs_drift_check.py --strict` separately gates `docs/controller-methods.md`; **nothing** checks `settings.jsonc`'s method strings — see [`the-traps.md`](the-traps.md) #3 |
 | A settings key | `settings.jsonc` | `settings.schema.json` (**required** — unknown keys are rejected), the loader's defaults, `docs/settings-json.md` | schema test, `tools/docs_drift_check.py` |
 | A GUI field | `simple_gui.py`'s `populate_values()` | Usually nothing — the web GUI consumes the same dict and gets it automatically | `tools/gui_field_extract.py` |
 | A colour | `simple_gui.py` module constants or `self.colors` | The CSS custom properties in the web template | `tools/design_token_diff.py` (gated at 0) |
