@@ -1,12 +1,17 @@
 # What the Pi taught us
 
 This page is about *how to reason about this system*, not a list of what happened during one
-review. The headline number: of sixteen hardware predictions written from source during the
-system review, **five were contradicted** — and of three desk diagnoses handed to the Pi
-later for a fix, **two were wrong about the mechanism**. Every one of those was written by
-someone who had read the code carefully. That is the lesson: reading carefully is necessary
-and not sufficient, and the value of this page is knowing *which kinds* of claim that applies
-to.
+review. The headline number: of the sixteen hardware predictions originally written from
+source during the system review, **five were contradicted** — and of three desk diagnoses
+handed to the Pi later for a fix, **two were wrong about the mechanism**. Every one of those
+was written by someone who had read the code carefully. That is the lesson: reading carefully
+is necessary and not sufficient, and the value of this page is knowing *which kinds* of claim
+that applies to.
+
+(The verification queue has since grown to seventeen entries — PI-017 was added 2026-08-26,
+reopening a finding on a later correction rather than belonging to the original sixteen-item
+pass, and it's still `unverified`. It sits outside the sixteen/five count above; see
+[`hardware-log.md`](hardware-log.md).)
 
 A contradicted prediction is a good outcome. The entire value of writing a prediction down
 before looking is that it lets you notice, later, exactly where your model of the system
@@ -141,4 +146,4 @@ someone who wasn't there.
 ## Further reading
 
 - [`hardware-log.md`](hardware-log.md) — the ongoing, dated log of hardware findings this page distills the durable lessons from.
-- `system-review/PI-VERIFICATION-QUEUE.md`, `PI-RESULTS-2026-08-24.md`, `PI-RESULTS-2026-08-25.md` (in the `cinemate` repo) — the sixteen full worked cases and the fix-round verification behind this page.
+- `system-review/PI-VERIFICATION-QUEUE.md`, `PI-RESULTS-2026-08-24.md`, `PI-RESULTS-2026-08-25.md` (in the `cinemate` repo) — the original sixteen full worked cases and the fix-round verification behind this page, plus the seventeenth (PI-017) added afterward — see [`hardware-log.md`](hardware-log.md).

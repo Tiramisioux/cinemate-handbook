@@ -45,9 +45,10 @@ introduces anything that wants its own DRM/KMS client, it will hit this wall; se
 
 ## 5. The web GUI has no state of its own
 
-It consumes the HDMI GUI's value dictionary (`populate_values()`, 68 fields) verbatim over
-Socket.IO, and those updates are emitted from inside the framebuffer draw loop. Add a field to
-the HDMI GUI's dict and the browser gets it for free — but stop the GUI thread and the browser
-freezes with it, because it has no independent source of truth. See
-[`../architecture/gui-state-model.md`](../architecture/gui-state-model.md) for the full
-surface-by-surface breakdown.
+It consumes the HDMI GUI's value dictionary (`populate_values()`, 85 fields — mechanically
+counted by `tools/gui_field_extract.py`, and a lower bound: dynamically-built keys are
+invisible to it) verbatim over Socket.IO, and those updates are emitted from inside the
+framebuffer draw loop. Add a field to the HDMI GUI's dict and the browser gets it for free —
+but stop the GUI thread and the browser freezes with it, because it has no independent source
+of truth. See [`../architecture/gui-state-model.md`](../architecture/gui-state-model.md) for the
+full surface-by-surface breakdown.

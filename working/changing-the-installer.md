@@ -49,14 +49,49 @@ the kind of duplicated fact this codebase has drifted on before (see
 [`../conventions/philosophy.md`](../conventions/philosophy.md)'s "duplicated truth"
 principle).
 
+## No virtualenv — packages install to the system interpreter
+
+There is no `.cinemate-env` any more. `install_python_environment()` runs
+`pip install --user --break-system-packages` straight against the system `python3`; `--user`
+lands in `~pi/.local`, which `cinemate-autostart.service` (running as `User=pi`) finds
+automatically via PEP 370 with no PATH/PYTHONPATH changes. If you're writing an install or
+uninstall step that assumes a venv exists — activating one, looking for a `venv/bin/` — it
+doesn't: `cinemate-recovery.service` in particular runs on system `python3` deliberately,
+treating "the venv is broken" as explicitly not a failure mode it needs to plan around.
+
+## `versions.env` pins which cinepi-raw commit an install uses — but only for `cinemate-install.sh`
+
+`cinemate-install.sh` sources `versions.env` near the top, before `CINEMATE_REPO_REF` /
+`CINEPI_RAW_REPO_REF` fall back to empty (= "clone the default branch, today's existing
+behaviour"). It exists because `cinemate` and `cinepi-raw` talk over a Redis key contract and
+nothing else records which two revisions were actually tested together. Filling it in is a
+real procedure, not just editing the file: do a clean install, verify the camera reaches ready
+and records, then commit the two `git rev-parse HEAD` values from that machine as the "last
+verified pairing." As of this writing that pairing is still blank
+(`# Last verified pairing: (none recorded yet)`) — don't assume a filled-in pin exists just
+because the mechanism does.
+
+**`cinemate-update.sh`, the day-to-day update script, does not source `versions.env` at all**
+— it only `git fetch` / `git pull --ff-only`s whatever's already checked out on each repo
+independently. So even a correctly-recorded pairing only constrains a fresh
+`cinemate-install.sh` run; routine updates on an existing Pi can drift the two repos apart
+regardless of what `versions.env` says. If you're changing either script, don't extend one's
+behaviour assuming the other already respects the pin.
+
 ## Adding a systemd service
 
 Add `services/<name>/` with its own `.service` file and a Makefile implementing
 `install`/`uninstall`, then add it to `services/Makefile`'s service list, the installer's
 service step, and `docs/system-services.md` / the services section of
-`docs/installation-steps.md`. **Nothing in CI catches a missed doc update here** — the
-install docs have historically covered four of five existing services, missing the recovery
-console entirely. Double-check by hand.
+`docs/installation-steps.md`. **Nothing in CI catches a missed doc update here** — the recovery
+console shipped without this once already (since fixed). Double-check by hand.
+
+Also check `src/module/installed_files.py`'s `INSTALLED_FILES` list if the new service should
+warn operators when `git pull` outpaces `sudo make install` — today it only covers
+`cinemate-autostart`'s five files, so the same silent-stale-copy failure mode on
+`storage-automount`, `wifi-hotspot`, `redis-log-maintenance`, or `cinemate-recovery` produces
+no warning at all. Nothing wires a new service into it automatically; it's a manual addition
+per service, not a checklist item CI enforces.
 
 ## Test on a genuinely blank card before trusting a clean-install claim
 

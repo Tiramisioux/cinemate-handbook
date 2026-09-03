@@ -21,7 +21,7 @@ member doesn't stop the next person writing the raw string instead.
 ## Adding a controller method (a new action)
 
 This is the one with the most hidden edits. A new public method on `CinePiController` needs
-**all four** of:
+**all five** of:
 
 1. The method itself, on `CinePiController`.
 2. An entry in `cli_commands.py`'s command table — this is what makes it reachable from CLI,
@@ -30,10 +30,14 @@ This is the one with the most hidden edits. A new public method on `CinePiContro
    Python side and its hand-maintained JavaScript copy. These have drifted before, including
    agreeing with each other on the same wrong entry.
 4. A row in `docs/controller-methods.md`.
+5. Any `"method"` string under `settings.jsonc`'s `hardware_controls`/`input_peripherals`
+   (buttons, switches, rotary encoders) that should reach the new method.
 
 `tools/gui_field_extract.py` gates at zero in CI and will catch a method that's referenced
-somewhere but doesn't actually resolve. It will not catch a method you forgot to reference
-anywhere at all — that's a silent no-op button, not a CI failure. See
+somewhere but doesn't actually resolve — but only in the settings-editor catalogue (#3). It
+will not catch a method you forgot to reference anywhere at all — that's a silent no-op
+button, not a CI failure — and **nothing at all checks #5**, `settings.jsonc`'s method
+strings, so a rename there is invisible to every check in the drift job. See
 [`../orientation/the-traps.md`](../orientation/the-traps.md) #3 for exactly how that fails in
 practice: `getattr(controller, name)` resolving to `None` produces a log line, not an error,
 and nothing about pressing the button looks different to the operator.

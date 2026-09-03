@@ -57,14 +57,16 @@ promotion, and the Wi-Fi hotspot credential ladder are all independent, real mec
 this. The generalisable shape: **degrade in ladders whose last rung still produces a usable
 answer**, not an error.
 
-**Config is declarative and user-editable, and its comments are part of the product —
-directly violated, by the product's own settings editor.** `settings.jsonc`'s comments carry
-real explanatory content. The web settings editor used to round-trip the file through
-`json.dumps`, silently destroying every comment on save, with no backup — while the recovery
-console's config writer, in the same repository, backs up first and preserves the raw text
-with the reasoning stated in its own docstring ("the order is not negotiable"). When you're
-about to write configuration back to disk, find and copy that second implementation, not the
-first.
+**Config is declarative and user-editable, and its comments are part of the product.**
+`settings.jsonc`'s comments carry real explanatory content. The web settings editor used to
+round-trip the file through `json.dumps`, silently destroying every comment on save, with no
+backup — a real, once-shipped violation of this. It's fixed now: `src/module/jsonc_edit.py`
+locates each changed value's exact span in the original text and rewrites only that span,
+so comments, key order and formatting survive untouched; the settings editor backs up the
+file first, then writes through this (`apply_updates()`), falling back to a full `json.dumps`
+rewrite — and telling the operator so — only when the change is structural (a key added or
+removed, an array resized). When you're about to write configuration back to disk, copy
+`apply_updates()`, not a bare `json.dumps()`.
 
 ## Principles the review surfaced that weren't stated anywhere first
 

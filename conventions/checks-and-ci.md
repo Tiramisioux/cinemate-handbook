@@ -13,18 +13,22 @@ Defined in `.github/workflows/checks.yml`, all on plain `ubuntu-latest`, none ne
 
 | Job | What it runs | What it actually protects |
 |---|---|---|
-| `pytest` | The full `_test/` suite (~420 tests) | The Python behaviour the tests cover — portable by design, no hardware, no Redis server, no GPIO. See [`testing.md`](../working/testing.md). |
+| `pytest` | The full `_test/` suite (~900 tests) | The Python behaviour the tests cover — portable by design, no hardware, no Redis server, no GPIO. See [`testing.md`](../working/testing.md). |
 | `ruff` | `ruff check src/` | Style, unused imports, and — critically — bare `except:` and silent `except: pass`, which enforces the "fail visible" principle mechanically (see [`philosophy.md`](philosophy.md)). |
 | `shellcheck` | Every `.sh` file in the repo | The installer and helper scripts stay shell-correct; this is the best-maintained corner of the codebase and this job is why. |
 | `mkdocs` (in `docs.yml`) | `mkdocs build --clean` | The published documentation site still builds — every PR, not just pushes to `main`/`dev`. Publishing itself is gated to `main` only. |
-| **contract drift** | Four custom stdlib-only scripts under `tools/` | The cross-file and cross-repo facts that keep silently disagreeing — see below. This job is this review's real, lasting legacy. |
+| **contract drift** | Six custom stdlib-only scripts under `tools/` | The cross-file and cross-repo facts that keep silently disagreeing — see below. This job is this review's real, lasting legacy. |
 
 ## The contract-drift job, in detail
 
-Four checks, each aimed at a specific place this codebase has drifted before:
+Six checks, each aimed at a specific place this codebase has drifted before:
 
 - **`docs_drift_check.py --strict`** — docs match the code (settings keys, controller
   methods documented, etc.).
+- **`findings_disposition_check.py`** — every row in `system-review/FINDINGS.md` carries one
+  of five dispositions (`fixed`/`guarded`/`accepted`/`superseded`/`strength`). B10.1 gave all
+  228 findings a disposition; this is what stops a new one being appended without one, or with
+  a typo'd value.
 - **`design_token_diff.py --strict`** — the HDMI GUI's colour constants and the web
   template's CSS custom properties haven't diverged. Gated at zero; nothing has drifted yet.
 - **`gui_field_extract.py --max-unresolved 0`** — every action the settings editor (and the
@@ -32,12 +36,16 @@ Four checks, each aimed at a specific place this codebase has drifted before:
   Gated at **zero**: this is the check that would have caught `set_log` shipping as a button
   that silently did nothing (see [`../orientation/the-traps.md`](../orientation/the-traps.md)
   #3).
+- **`link_frequency_drift_check.py --strict`** — the CSI-2 link-frequency values (hz options
+  the settings editor offers per sensor) live only in `resources/sensors.json`; this fails if
+  the settings-editor template hardcodes one of those numbers instead of reading it from the
+  database. Gated at zero.
 - **`redis_key_diff.py --max-unreferenced 12`** — needs both repositories checked out,
   because the key contract spans them (see
   [`../architecture/redis-contract.md`](../architecture/redis-contract.md)). This one is a
-  **ratchet, not a gate**: 12 keys cinepi-raw touches currently have no reference in
-  cinemate, and the check exists to stop a thirteenth appearing unnoticed, not to fail until
-  those twelve are triaged.
+  **ratchet, not a gate**: 8 keys cinepi-raw touches currently have no reference in cinemate
+  (the ceiling itself, 12, hasn't been tightened down to match — see below), and the check
+  exists to stop a thirteenth appearing unnoticed, not to fail until those are triaged.
 
 ## A ratchet is not a gate
 

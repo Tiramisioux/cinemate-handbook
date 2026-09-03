@@ -9,8 +9,10 @@ it is: short pages, one topic each, a router at the top — cheap to load only t
 task needs, instead of one long document.
 
 It is not the archive — that is `system-review/` in the `cinemate` repo, a dated record of an
-eleven-session audit (193 findings) with line-cited evidence. When a page here would restate a
-finding, it links to `system-review/` instead of copying it. See
+eleven-session audit (228 findings — grew past the original 193 as later remediation batches
+appended more; see [`lessons/review-archive.md`](lessons/review-archive.md)) with line-cited
+evidence. When a page here would restate a finding, it links to `system-review/` instead of
+copying it. See
 [`lessons/review-archive.md`](lessons/review-archive.md) for the map between the two.
 
 This handbook is not published by mkdocs — `docs/` is the operator-facing site for humans
