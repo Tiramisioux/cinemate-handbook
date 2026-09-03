@@ -1366,3 +1366,77 @@ than being backfilled here.
 **Confirmed by:** operator, 2026-09-03 — "the imx585 switch is verified to work," in the
 session that prepared the branch switch for the 3.4.0 release drift-fix pass (see
 `docs/release-3.4-drift-fixes` on `cinemate` and `cinepi-raw`).
+
+## 2026-09-04 — C2 DSI/DPI probe session: the `--hdmi-port` premise refuted, and RP1 panels have one RGB primary plane
+
+**Tested:** four purpose-built probes on the CM5 Lite dev unit (kernel `6.12.93+rpt-rpi-2712`,
+cinepi-raw built 2026-09-02, imx585 on `cam0`, HDMI monitor attached) — a `/sys/class/drm` +
+`modetest` census, a `--hdmi-port` inertness test, a DRM plane/format/attach probe written to
+replicate `preview/drm_preview.cpp`'s exact path, and a no-hardware overlay experiment that
+loaded `dtoverlay=vc4-kms-dsi-generic` to make an RP1 DSI device appear without a panel.
+Probes and raw output: `development/c2-dsi-display/` (external workspace), consolidated in its
+`FINDINGS.md`.
+
+**Worked:**
+- The plane probe reproduced cinepi-raw's HDMI path exactly: on `card1`/vc4 there are **48
+  OVERLAY planes visible without `DRM_CLIENT_CAP_UNIVERSAL_PLANES`**, 16 on the HDMI CRTC, all
+  advertising YU12; `drmModeAddFB2` + `drmModeSetPlane` succeeded with the fbcon GUI still on
+  screen. That is why HDMI works today.
+- **Cross-card dma-buf import works.** One buffer allocated from `/dev/dma_heap/vidbuf_cached`
+  — cinepi-raw's own first-choice heap, which is the *non-contiguous system heap* on Pi 5 —
+  imported successfully into **both** the vc4 card and the RP1 DSI card, with `AddFB2`
+  succeeding on each. Simultaneous real libcamera preview on HDMI and a panel is therefore
+  mechanically possible from a single camera buffer.
+- Loading a DSI overlay with **no panel attached** still registers the DRM device, which makes
+  the whole RP1 question answerable without owning a panel.
+- Gate G0a: on a stock rig with no panel overlay there are **no `DSI-*` or `DPI-*` connectors
+  at all**, so widening cinemate's HDMI-only display glob is provably a no-op in the field.
+
+**Did not work / contradicted:**
+- **The entire premise of the C2 plan is dead.** `--hdmi-port` is inert on the shipped binary:
+  `--hdmi-port 7` is accepted silently (the `hdmi-port must be -1, 0 or 1` check is
+  unreachable), and every launch — with `0`, `1`, `7`, or the flag absent — logs `HDMI request
+  -1, selected connector -1` and then runs the type-agnostic fallback (`No connector ID
+  specified.  Choosing default from list:` → `Connector 33 (crtc 92): type 11, 1920x1080
+  (chosen)`). The proposed fix, "stop passing `--hdmi-port`", is a **no-op**.
+- **An RP1 DSI CRTC has exactly ONE plane, type `PRIMARY`, 7 formats, no YUV.** cinepi-raw's
+  OVERLAY-only search finds **zero** planes there. `drmModeSetPlane` with XR24 returned
+  `EINVAL`, though that request asked to scale 640x480 onto an 840x480 CRTC and a
+  `drm_simple_display_pipe` primary plane rejects scaling — so the refusal is probably geometry
+  and remains **unconfirmed** pending a 1:1 retry.
+- **`dtoverlay=vc4-kms-dpi-hyperpixel4` fails to bind on a stock CineMate rig**, silently:
+  `pinctrl-rp1: pin gpio2 already requested by 1f00074000.i2c; cannot claim for
+  1f00148000.dpi`. CineMate's own `dtparam=i2c1=on` holds GPIO2, so `drm-rp1-dpi` never
+  registers a DRM device. One dmesg line, nothing user-visible.
+- The installer's `cmdline.txt` token **does** force the HDMI connector on — the kernel logs
+  `[drm] forcing HDMI-A-1 connector on`. So `framebuffer.py :: drm_hdmi_connected` returns
+  `True` on every stock install regardless of cable, and `simple_gui.py :: check_display`'s
+  headless branch has never run in the field. This was *probable* in the plan; it is now
+  confirmed.
+
+**Why:** `CinePiOptions` declares a private `int hdmi_port` that **shadows** the public
+`Options::hdmi_port`; `CinePiOptions::Parse` writes the derived member and never syncs it
+(the same function does exactly that for `camPort`), so `make_drm_preview` — which reads the
+base member through an `Options *` — always sees `-1`. For the panel, `rp1_dsi.c` and
+`rp1_dpi.c` build their KMS pipeline with `drm_simple_display_pipe_init()`, which creates a
+single PRIMARY plane with an RGB-only format list; that same plane backs the panel's own fbdev
+(`/dev/fb1`, 840x480, **32 bpp** — versus vc4's 16 bpp `fb0`), so a DRM preview and cinemate's
+fbdev GUI contend for one plane, and cinemate's never-executed 32-bpp converter paths become
+live the moment a panel appears.
+
+**Also recorded, each replacing a *probable* claim:** a DSI connector reads `connected` when
+the overlay binds with **no panel attached** (status means "driver probed", not "cable
+seated"); the connector is named **`DSI-2`**, not `DSI-1`; the live preview inset is **94/53**,
+not the 94/50 the planning arithmetic assumed; the overlay is `vc4-kms-dpi-hyperpixel4sq` (not
+`-square`); `vc4-kms-dsi-7inch` takes a **`dsi0` boolean param** (default DSI1), not a
+`,dsiN` suffix; and the ili9881 overlays expose a **`rotation` {0,90,180,270}** parameter,
+which may retire the "Touch Display 2 landscape needs a CPU rotate" objection entirely. Finally,
+cinepi-raw's **EGL preview is already compiled in** — `rpicam_app.so.1.7.0` contains `Made
+X/EGL preview window` and not `egl libraries unavailable`, and references `epoxy_egl*` and
+`XOpenDisplay` — so a display-server architecture would need no cinepi-raw rebuild, though no
+X or Wayland server is installed on the rig.
+
+**Confirmed by:** operator, live session 2026-09-03/04. Raw probe output in
+`development/c2-dsi-display/results/` (`census-nopanel.txt`, `hdmi-port.txt`,
+`hdmi-port-testB.txt`, `plane-inspect-nopanel.txt`, `plane-dsi-nohw.txt`,
+`plane-attach-dsi-nohw.txt`).
