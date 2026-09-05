@@ -119,6 +119,40 @@ it back at the far end, say so explicitly and treat every conclusion downstream 
 resting on an unverified premise. That sentence is cheap at the start of an investigation and
 very expensive at the end of one.
 
+### A log line is only evidence if one build could have printed it
+
+Playback reported no embedded thumbnail on every take. The camera's log said
+`DNG writer: raw-only frames; embedded lores thumbnail disabled`, and that line was read as
+proof that a mode variable had been assigned too late — a subtle ordering race, duly fixed. It
+was **the same string in both candidate builds**: unconditional in the branch that has no
+thumbnail code, and the `mode == 0` arm of a new `if` in the branch that does. It could not
+distinguish "the setting read 0" from "this binary predates the feature", which was the actual
+open question that evening. Before treating a message as evidence for a mechanism, check how
+many code paths and how many builds can emit that exact string. If more than one can, it
+narrows nothing. Two habits follow: log values, not conclusions — `thumbnail=0` would have been
+unambiguous where `disabled` was not — and when a feature arrives by merge, establish that the
+running binary contains it before diagnosing why it misbehaves.
+
+### The file is the witness, not the control that was supposed to configure it
+
+The same session's diagnosis started from the right place. The playback API's per-clip `source`
+field is derived by reading each DNG for a chained second IFD — it never consults Redis — so it
+reports what was *written*, take by take, and it split the takes cleanly on the day the camera
+changed branches. The Redis key looked correct throughout and pointed at nothing, because a
+control's value tells you what was requested, not what happened. When a pipeline has an
+artifact, interrogate the artifact: it is the only participant with no opinion.
+
+### A fallback whose failure mode is "yes" is not a fallback
+
+Hat detection probed the hat's own I²C address and, when that did not answer, fell back to the
+existence of a sysfs node bound on every Pi 5. The fallback could return true and could never
+return false, so a plain NVMe was labelled CFexpress on hardware that had no hat within reach.
+The tell is structural and readable at a desk: a presence test that cannot produce a negative on
+the hardware you ship on is an unconditional `True`. A second component had probed the same
+address correctly, with no fallback, since the day it was written — the two had simply never been
+asked the same question out loud. And the fix immediately exposed a second bug downstream, a
+status box that had only ever fitted because the wrong label happened to be the right length.
+
 ### What held, and why it held
 
 Not every prediction broke. A finding that one particular subscriber, if it ever raised an

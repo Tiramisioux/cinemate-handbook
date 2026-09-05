@@ -28,7 +28,7 @@ kill anything importing more. When a module has a non-obvious constraint, say so
 ## Threading — two shapes, not interchangeable
 
 **A long-lived component** subclasses `threading.Thread` and exposes `run()` and `stop()`.
-**A one-off task** uses `threading.Thread(target=..., daemon=True)`. Three rules the codebase
+**A one-off task** uses `threading.Thread(target=..., daemon=True)`. Four rules the codebase
 earned the hard way:
 
 1. **Give every `join()` a timeout.** Shutdown must not hang on a thread wedged in a
@@ -40,6 +40,13 @@ earned the hard way:
    this is exactly how the Redis listener could freeze all live state silently (see
    [`../orientation/the-traps.md`](../orientation/the-traps.md) #1). If a thread is
    load-bearing, expose a liveness check on it.
+4. **A retry loop needs a branch for "this can never succeed."** Optional peripherals are
+   optional: hardware that has not answered since startup is not fitted and will not start
+   answering, so say so once at `INFO` and stop probing, and keep the interval retry for the
+   case that can actually recover — something that *was* present and went away. A loop that
+   warns every few seconds forever is not diligence; it evicts the startup output that every
+   other diagnosis on that machine depends on. Worked example in
+   [`../working/repository-and-tooling-traps.md`](../working/repository-and-tooling-traps.md).
 
 ## Error handling — one stated principle, three legitimate shapes
 

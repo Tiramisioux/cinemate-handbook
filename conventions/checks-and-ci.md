@@ -94,6 +94,28 @@ exact build/test loop.
 If you're tempted to add a comment saying "keep X and Y in sync", write a check instead —
 see [`philosophy.md`](philosophy.md)'s "duplicated truth" principle.
 
+## Two ways a check quietly stops protecting you
+
+Both of these apply to anything that scrapes a file for a set of names — the `tools/` drift
+scripts and the text-reading guards in `_test/` alike.
+
+**A check that finds nothing must fail, not pass.** A guard that extracts a set from a file
+and compares it against another set passes trivially once the extraction stops matching:
+change the markup shape and the check is comparing two empty sets, green forever. Assert a
+plausible floor on what the extractor found — the settings editor's page-tab guard asserts at
+least five tabs were located before it compares anything, precisely so a markup change goes
+red instead of silently checking nothing.
+
+**When a text-scraping check fails, suspect the extractor before the code.** A tab-name
+pattern of `[a-z]+` silently dropped the page named `i2c` because of the digit — and it did
+not fail as "the extractor is wrong", it failed as a set mismatch blaming a missing landing
+section, pointing at a file that was fine. A set-difference assertion cannot tell you whether
+the set is wrong or the source is, so make the extraction pattern the first thing you check
+and write the reason next to it. The concrete guards this came from are in
+[`../working/repository-and-tooling-traps.md`](../working/repository-and-tooling-traps.md);
+note that the corrected pattern now lives in two test files held together by a comment — the
+weaker half of the rule above, and still uncovered.
+
 ## Further reading
 
 - `.github/workflows/checks.yml`, `.github/workflows/docs.yml` — the actual job definitions.

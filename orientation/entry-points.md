@@ -43,7 +43,11 @@ Stated so you know what you're inheriting rather than discovering it:
 - cinepi-raw's DNG writer (`dng_encoder.cpp`) has changed substantially between reviewed
   snapshots — treat any specific claim about its internals as unverified until you read the
   current file yourself.
-- The settings editor's client-side JavaScript (over a thousand lines) has been scanned for
-  catalogue names but not read closely — anything touching its client behavior is unmapped.
+- The settings editor's client-side JavaScript (over a thousand lines) is only partly mapped.
+  Four corners are now written up — MJPEG stream recovery, the fullscreen probe, the two grid
+  sizing traps, and the log console — in
+  [`../working/browser-side-traps.md`](../working/browser-side-traps.md) and
+  [`../working/repository-and-tooling-traps.md`](../working/repository-and-tooling-traps.md);
+  the rest has been scanned for catalogue names but not read closely.
 - The Wi-Fi hotspot triangle (a service, an in-app manager, and a superseded copy) is only
   partly read.

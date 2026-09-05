@@ -1440,3 +1440,156 @@ X or Wayland server is installed on the rig.
 `development/c2-dsi-display/results/` (`census-nopanel.txt`, `hdmi-port.txt`,
 `hdmi-port-testB.txt`, `plane-inspect-nopanel.txt`, `plane-dsi-nohw.txt`,
 `plane-attach-dsi-nohw.txt`).
+
+## 2026-09-05 — embedded DNG thumbnails were off on every take; the merge was necessary but not sufficient, and the log line could not say which
+
+**Tested:** the operator's camera, running cinepi-raw `dev`. Evidence came from two places, not
+from Redis: the playback API's per-clip `source` field across every take on mounted storage
+from 2–5 September, and cinepi-raw's own startup log read off the running camera. Branch
+positions across the session: `dev` at `171b066` (no writer-side thumbnail), the merge of
+`feature/dng-playback` into `dev` (`cbb82d7`), and the fix (`c9b2c5f`).
+
+**Worked — the evidence path, and it is the reusable part of this entry:** `frame_source()` in
+`src/module/app/playback.py` answers `thumbnail` only when `dng_preview.read_metadata()` found
+a second IFD chained after the raw image, and `decode` otherwise. **It reads the take's own
+file, never Redis.** So the per-clip `source` field is a per-take fact about what was written,
+and it split cleanly: takes from 2–4 September said `thumbnail`, every take from 5 September
+said `decode`. The break lines up with the camera moving from `feature/dng-playback` to `dev`.
+
+The pane made this loud rather than slow. `_RAW_DECODE_FALLBACK_ENABLED` is `False` in
+`playback.py`, so a thumbnail-less take does not quietly fall back to a raw decode — it raises,
+and the operator gets `NO EMBEDDED THUMBNAIL` on every take. A silent degradation would have
+been a slower pane nobody filed.
+
+**Confirmed by reading, and settled there:** pre-merge `dev` had the *controller* plumbing —
+`CP_DEF_THUMBNAIL`, the `sync()` pipeline read of `CONTROL_KEY_THUMBNAIL`, the pub/sub handler,
+the `options_->thumbnail` assignment — but **no writer-side thumbnail at all**. In
+`cinepi/dng_encoder.cpp`, `setup_encoder()` filled in the `dng_info.thumb*` fields and then
+printed, *unconditionally*, `DNG writer: raw-only frames; embedded lores thumbnail disabled`.
+The takes really were thumbnail-less and the merge really was necessary. (The merge also
+repaired a key-name bug in the same block: pre-merge, the absent-`thumbnail_size` branch of
+`sync()` re-seeded `CONTROL_KEY_THUMBNAIL` instead of `CONTROL_KEY_THUMBNAIL_SIZE`.)
+
+**Did not work as first diagnosed — the mechanism recorded in `c9b2c5f` does not reproduce from
+the source:** that commit states `options_->thumbnail` "is assigned in exactly one place,
+`CinePIController::sync()`, and `sync()` runs after the encoder is configured, so this read 0 on
+every start". Reading `dev` at `c9b2c5f`, neither half holds:
+
+- It is assigned in **two** places in `cinepi/cinepi_controller.cpp` — in `sync()`, and in the
+  `CONTROL_KEY_THUMBNAIL` entry of the controller's pub/sub handler table. Nothing registers it
+  as a command-line option; `cinepi/raw_options.hpp` declares `int thumbnail{}`, so absent both
+  writers it is 0.
+- `controller.sync()` is the **second statement of `event_loop()`** in `cinepi/cinepi_raw.cpp`,
+  ahead of `app.StartEncoder()`. `setup_encoder()` is never called from there: it runs lazily
+  from `CinePIRecorder::EncodeBuffer()` behind `!encoder_->initialized()`, and `reset_encoder()`
+  is called on the record trigger and on every resolution reconfigure — so it re-runs at the
+  first frame of *every take*, always long after `sync()` has returned. `sync()` has no early
+  return and no throw between its Redis pipeline read and the assignment.
+- Both objects are the same object: `CinePIController` takes `options_(app->GetOptions())` and
+  `CinePIRecorder::createEncoder()` passes `GetOptions()` to `DngEncoder`, which stores it as
+  `RawOptions const *`. `CinePiOptions : RawOptions : VideoOptions`, one instance, three casts.
+
+**Why: not established.** The symptom is real and the fix is right, but the ordering story is
+not what the source says. The most economical competing explanation is that **the log quoted as
+evidence came from a binary built before the merge.** Both lines in that pair —
+`Encoder configured – …` and `DNG writer: raw-only frames; embedded lores thumbnail disabled` —
+are **byte-identical** in pre-merge `dev` (where the second is unconditional) and in the merged
+build (where it is the `thumb_mode_ == 0` branch). The pair therefore cannot distinguish "the
+mode read 0" from "this binary has no thumbnail code", and the merge landed at 22:52 with the
+fix at 23:12 the same evening. Whether a rebuild happened in between is not recorded anywhere.
+
+**Next test that would settle it (cheap, one take):** temporarily restore
+`thumb_mode_ = options_->thumbnail` in `setup_encoder()`, rebuild from post-merge `dev`, put
+`thumbnail=2` in Redis, and record one take. *Prediction, stated in advance:* the log reads
+`DNG writer: embedded lores thumbnail colour at 1280x720 (shift 0)` — which kills the ordering
+hypothesis. If it reads `disabled`, the ordering hazard is real and something in the reading
+above is wrong. Cheaper still, and worth doing regardless: log `options_->thumbnail` by value at
+the top of `setup_encoder()`, so the next occurrence names the value instead of implying it.
+
+**The fix, and why it is right anyway:** `c9b2c5f` pins `thumb_mode_ = 2` and deletes the read.
+That is defensible independent of the mechanism — a setting that must win a race against encoder
+configure on every start is a bad shape even when it wins, playback wants a thumbnail on every
+take, and raw decode on the Pi costs far more than serving one. It is not, however, *evidence*
+that the race existed.
+
+**Still exposed, unchanged:** `thumb_shift_` in the very next line still reads
+`options_->thumbnailSize` at configure time and carries whatever ordering exposure the
+`thumbnail` field had. It is 0 either way today — both `CP_DEF_THUMBNAIL_SIZE` and the shipped
+Redis value are 0 — so it is invisible, which is exactly the condition under which it will
+surprise someone later.
+
+**Unmeasured, and named rather than dropped:** shift 0 means a full-lores thumbnail. The lores
+plane is mode-dependent — `_calc_lores()` in `src/module/sensor_detect.py` fixes height at 720
+and derives width from the sensor aspect, so 1280×720 for a 16:9 mode (and the 1272 the
+controller's own comment quotes for a ~1.767 mode). At 1280×720 colour that is 1280·720·3 ≈
+**2.76 MB on top of each ~10.4 MB UHD 10-bit frame, roughly +27%** — against write bandwidth on
+a long take, **never measured**. Note the drift this leaves behind: `sync()`'s comment in
+`cinepi_controller.cpp` still calls this "the +7-22% write-cost feature", a range computed
+before colour-at-shift-0 became the default.
+
+**Not established, and a later reader should not infer it:** two commits on the same branch
+disagree about whether C9's hardware gates ran. `f57cc87` justifies `CP_DEF_THUMBNAIL 0 -> 2` as
+an "operator decision after hardware verification (G10/G11)"; `c9b2c5f` says "the branch's Pi
+gates were never run, so it had never been observed end to end". Treat the gate state as open
+until a session records it.
+
+**Confirmed by:** operator, live session 2026-09-05 — the playback pane reporting
+`NO EMBEDDED THUMBNAIL` on every take, and the per-clip `source` split at 5 September.
+cinepi-raw `cbb82d7` (merge), `c9b2c5f` (fix), `f57cc87` (default), `171b066` (pre-merge `dev`).
+
+## 2026-09-05 — a plain NVMe reported as a CFE Hat: a fallback that cannot say no
+
+**Tested:** the operator's camera, an ordinary NVMe in the Pi 5 slot and no CFE Hat fitted.
+Cross-checked the HDMI GUI's SYS row against the settings editor's new i2c pane
+(`src/module/app/hardware_probe.py`), which reports the bus directly.
+
+**Did not work:** the SYS row said `CFE`. The i2c pane, on the same camera at the same time,
+reported **nothing answering at 0x34**. Two independent paths in `src/module/ssd_monitor.py`
+produced the wrong label, and both mistook the Pi 5's own PCIe bridge for the hat:
+
+- `SsdMonitor._detect_cfe_hat()` probed 0x34 and, when that did not answer, **fell back to the
+  existence of `/sys/bus/platform/drivers/brcm-pcie/1000110000.pcie`**. That node is bound on
+  every Pi 5. It is a bridge-present test, not a hat-present test — it can return `True` and can
+  never return `False` on the hardware CineMate ships on.
+- `SsdMonitor._classify_device()` separately returned `CFE` for any device whose real sysfs path
+  contained `1000110000.pcie` — which is where a CFexpress card behind the hat appears, and
+  equally where a plain NVMe in the slot appears. It never consulted the hat probe at all.
+
+**Why:** the two tests answer different questions and the code treated them as one. 0x34 is the
+hat's own latch/LED microcontroller, physically on the hat, so it answers only when one is
+fitted. The PCIe node is the bridge the hat plugs into, present whether or not anything is
+plugged in. A fallback whose failure mode is "always yes" is not a fallback; it is an
+unconditional `True` wearing a probe's clothes.
+
+**Worked / fixed:** `888093c2` deletes the fallback and makes the PCIe-path branch ask
+`self._cfe_hat_present` before choosing between `CFE` and `NVMe`, the same way the generic-NVMe
+and name-heuristic branches below it already did. `services/storage-automount/storage-automount.py`
+needed no change: its `_cfe_hat_worker()` has always used the bare 0x34 read with no fallback,
+and `git log -S "brcm-pcie/1000110000.pcie"` over that file returns nothing — the fallback never
+existed there. So the two components had disagreed about what "a hat is present" means for as
+long as both have existed, and only the Python side was wrong.
+
+**Also fixed in the same commit, and the same shape of bug:** `NVME` — now reachable as a SYS
+label for the first time — did not fit its box on the HDMI overlay. `simple_gui.py` drew that
+one box inline with a centred `box_font` and no overflow check, while `_draw_status_box()`, the
+helper that already keeps `LOG10` inside its box by falling back to a smaller font, sat unused a
+few hundred lines away. The web GUI was never affected: `boxes()` there already drops anything
+over three characters a size. Fixing a classification bug exposed a rendering bug that had been
+unreachable only because the wrong label happened to be three characters long.
+
+**Left behind by this fix, and it is already stale:** the module comment at the top of
+`src/module/app/hardware_probe.py` still reads "`SsdMonitor` also falls back to the Pi 5 PCIe
+bridge node". That was true when the i2c pane was written (`659eb3b4`) and false thirty minutes
+after `888093c2`; nothing failed. Two files, one fact, and the copy that is not executed is the
+one that rotted — the handbook's founding case, reproduced in a single evening.
+
+**The check that would have caught it, and does not exist:** `_classify_device()` is pure
+string-and-path logic and `SsdMonitor` already imports cleanly into the portable suite
+(`_test/test_ssd_monitor_format.py`). Nothing in `_test/` references `_classify_device` or
+`_detect_cfe_hat`. A test asserting `NVMe` for a `1000110000.pcie` realpath with
+`_cfe_hat_present = False`, and `CFE` with it `True`, is a few lines and needs no Pi. A comment
+naming the hazard was already present in `hardware_probe.py` and did not stop the bug — because
+a comment cannot fail.
+
+**Confirmed by:** operator, live session 2026-09-05, before and after, on the camera itself —
+i2c pane silent at 0x34 while the SYS row read `CFE`. cinemate `888093c2`.

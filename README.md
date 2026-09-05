@@ -31,7 +31,10 @@ a future session of you with no memory of this one.
 |---|---|
 | Add or change a Redis key, controller method, or settings key | [`working/changing-a-control.md`](working/changing-a-control.md), then [`orientation/entry-points.md`](orientation/entry-points.md) |
 | Change what the HDMI GUI or web GUI shows | [`working/changing-the-gui.md`](working/changing-the-gui.md), then [`architecture/gui-state-model.md`](architecture/gui-state-model.md) |
+| Touch the browser side of either web page | [`working/browser-side-traps.md`](working/browser-side-traps.md), then [`working/changing-the-gui.md`](working/changing-the-gui.md) |
 | Change the installer or a systemd service | [`working/changing-the-installer.md`](working/changing-the-installer.md) |
+| Detect or report what is attached to the I²C bus | [`working/probing-i2c-peripherals.md`](working/probing-i2c-peripherals.md) |
+| Commit an image, stream the log, or write a text-scraping guard | [`working/repository-and-tooling-traps.md`](working/repository-and-tooling-traps.md) |
 | Run or add tests, understand what needs a Pi | [`working/testing.md`](working/testing.md) |
 | Run a deterministic hardware verification session | [`working/hardware-session.md`](working/hardware-session.md) |
 | Understand how cinemate boots and threads | [`architecture/cinemate.md`](architecture/cinemate.md) |
