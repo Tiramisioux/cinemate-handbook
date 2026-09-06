@@ -105,7 +105,47 @@ loud warning plus uncorrected (magenta) linear 12-bit output instead.
 place, inserted at the front of the post-processing chain, ahead of both
 preview stages — so HDMI, MJPEG, and the DNG thumbnail (which reads the lores
 stream) all inherit the fix for free without any of those three consumers
-being touched.
+being touched. Neither the static post-process file nor the dual-sensor one
+Cinemate writes names the stage; `EnsureFirstPostProcessingStage` inserts it,
+so it runs on defaults unless a file overrides it.
+
+### The clamp zone, and why the preview needs a second correction
+
+Decompanding fixes the *transfer* but cannot un-clip, and the second half is
+easy to mistake for the first. In 12-bit ClearHDR the HG/LG merge clamps
+**digitally**, and the channels **converge** as it does — a blown area arrives
+with R, G and B on very nearly the same code. An equal-code quad is exactly
+what the preview renderer cannot pass through cleanly: under the shipping gains
+and CCM, green solves NEGATIVE for one at *any* level, clamps to 0, and the
+pixel is magenta. So the whole convergence zone renders magenta even though the
+decompand is working perfectly, which is why "highlights magenta, mid-tones
+correct" means the clip correction, **not** a missing decompand.
+
+`ccmp_preview.hpp`'s `desaturateHighlight()` blends such a pixel to neutral so
+blown reads as white. Two properties of its anchor are load-bearing and were
+each wrong in a shipped build:
+
+- **It anchors on the FLOOR of the clamp zone, not the peak code.** The zone is
+  soft; its body sits 60–80 codes below the highest code the sensor emits. The
+  ramp ends *at* the anchor, so anchoring near the peak leaves the body
+  desaturated by nothing.
+- **It is per binning.** The compander runs on `b*L` and divides back by `b`,
+  so the same physical clamp lands on a different code per binning (~2900 at
+  b=1, ~2582 at b=4). The anchor therefore lives in `CcmpAnchor::clip_code` in
+  `ccmp_lut.hpp`, beside the `T1` anchor that is already per binning for the
+  same reason. A single shared value fixes full res and leaves HD magenta.
+
+`CcmpPreviewColour::sensor_clip_code` is only an override (0 = use the table's
+anchor), exposed as `sensorClipCode` in the post-process file.
+
+**Reading the stage's log line.** It prints `peak raw code`, `highest
+uncorrected`, and a count of fully-desaturated quads. `highest uncorrected` is
+the one that answers the question: with the anchor placed correctly it sits
+just *under* the anchor (e.g. `highest uncorrected 2581` against `clip anchor
+2582`); when it tracks the frame peak instead, the anchor is too high and blown
+areas are still magenta. The peak alone cannot distinguish those two states —
+see the 2026-09-06/07 entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md),
+where it made two bad anchors look correct.
 
 ## CineMate Log (`--log-encode`)
 

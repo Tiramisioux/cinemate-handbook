@@ -1593,3 +1593,69 @@ a comment cannot fail.
 
 **Confirmed by:** operator, live session 2026-09-05, before and after, on the camera itself —
 i2c pane silent at 0x34 while the SYS row read `CFE`. cinemate `888093c2`.
+
+## 2026-09-06/07 — 12-bit ClearHDR magenta highlights: three attempts, and why the first two looked right in the log
+
+**Tested:** imx585 colour, 12-bit ClearHDR, both binnings, on `cinepi-raw` `dev` (`c9b2c5f`
+→ `4cd6a07` → `69878c5` → `f804ee1`), driver pin `cinemate-7modes`. Symptom: pink/magenta
+blown highlights in the HDMI preview, the web MJPEG live view and the embedded DNG thumbnail,
+while the recorded main image graded normally. 16-bit ClearHDR and SDR unaffected.
+
+**Worked:** `f804ee1`. Blown highlights render neutral white in all three consumers, at both
+4K and HD. Operator-confirmed.
+
+**Did not work:** the two attempts before it, *both of which produced a log line that looked
+like confirmation*:
+
+- `4cd6a07` anchored the highlight-desaturation trigger at raw code 3040, just under the peak
+  code the sensor emits. Log read `sensorClipCode 3040`, `peak raw code 3050..3061` — peak
+  above anchor, apparently working. The picture did not change at all.
+- `69878c5` moved the anchor to 2900 and fixed 4K. HD stayed exactly as magenta as before.
+
+**Why:**
+
+1. **The correction existed and was unreachable, not absent.** `ccmp_preview.hpp`'s
+   `desaturateHighlight()` is written for precisely this cast. It referenced
+   `highlight_rolloff` to `CcmpLut::white_level()`, i.e. the compander's top output code 4095,
+   putting the trigger at code 4017. The imx585 in 12-bit ClearHDR never gets there. The
+   decompand itself was always correct — which is why mid-tones were right and only clipped
+   highlights were wrong, and why "the preview never gets the decompand" (the obvious
+   hypothesis) was wrong.
+2. **The clamp is soft, and the body of the zone sits 60–80 codes BELOW the peak code.**
+   Measured under the still-magenta area: take `_210738` p1 2974 / p50 3000 / peak 3054;
+   take `_214831` p1 2948 / p50 2974 / peak 3027. The ramp ends *at* the anchor, so an anchor
+   near the peak leaves the body desaturated by a median of 0.000. **Anchor on the zone's
+   floor, never its peak.**
+3. **Why an equal-code quad goes magenta at all**, which is the part worth carrying forward:
+   the HG/LG merge clamps digitally and the channels *converge* as it does, so a blown area
+   arrives with R, G and B on nearly the same code. Under the shipping gains and CCM, green
+   solves NEGATIVE for an equal-code quad *at any level* (≈ −0.396·c), clamps to 0, and the
+   pixel is magenta. So the whole convergence zone renders magenta, not just its top. This
+   also corrects `desaturateHighlight()`'s original premise that green pins first — it does
+   not; all three channels pin together on one code.
+4. **The anchor is per binning.** The compander is applied to `b*L` and divided back by `b`,
+   so the same physical clamp lands on a different code per binning: ~2900 at b=1, ~2582 at
+   b=4. One shared number fixes full res and leaves HD untouched, because 2900 is above the
+   binned mode's entire range (its peak is ~2776). `clip_code` now lives in `CcmpAnchor`
+   beside `T1`, which was already per binning for the same reason.
+
+**Two method failures worth more than the fix:**
+
+- **The offline harness was biased and agreed with the wrong answer.** Reconstructing sensor
+  codes from a DNG by binary-searching for the first table entry `>=` the linear value rounds
+  every sample UP by most of a 10-bit log step near the top — enough to make anchor 3040 look
+  effective offline while doing nothing on hardware. Round to NEAREST. Once fixed, offline and
+  hardware agreed again. A desk reproduction that matches the shipped artefact to 3.2/255 can
+  still be systematically wrong in the one direction that matters.
+- **The diagnostic reported the wrong number.** `peak raw code` cannot say whether the
+  correction reached the *body* of the blown area, and it is what made both bad anchors look
+  right. The stage now also logs `highest uncorrected` — the highest code that did NOT fully
+  desaturate. With the anchor correct it sits just under it (`highest uncorrected 2581` against
+  `clip anchor 2582` at b=4); when it tracks the frame peak, the anchor is too high. Add the
+  observability that can FALSIFY the fix, not just the number that is consistent with it.
+
+**Confirmed by:** operator, 2026-09-07, after `f804ee1`; b=4 journal reads
+`peak raw code 2776, highest uncorrected 2581, ~3.2M quads fully desaturated (clip anchor 2582)`.
+Anchors: b=1 2900 measured from two takes; b=4 2582 derived from the b=1 peak-to-floor ratio
+applied to the binned peak, then confirmed in place on hardware by the line above rather than
+by a binned-take measurement.

@@ -153,6 +153,44 @@ address correctly, with no fallback, since the day it was written — the two ha
 asked the same question out loud. And the fix immediately exposed a second bug downstream, a
 status box that had only ever fitted because the wrong label happened to be the right length.
 
+### Add the observability that could FALSIFY the fix, not the number consistent with it
+
+Three attempts at one preview defect; the first two shipped, and each printed a log line that
+looked like confirmation. The stage reported `peak raw code 3050..3061` against an anchor of
+3040 — peak above anchor, apparently working — while the picture did not change at all. The
+peak was true and irrelevant: the correction ramps up to the anchor, so what decides the
+outcome is whether the *body* of the affected area clears it, and the body sat 60–80 codes
+below the peak. The number that settled it in one line was added last: the highest code that
+did **not** get corrected. When the anchor is right it sits just under it; when it tracks the
+peak, the fix is doing nothing.
+
+The generalisation is not "log more". It is that a diagnostic which can only ever be
+*consistent* with the fix is not evidence for it. When adding observability alongside a fix,
+ask what reading the instrument would give if the fix were failing — and if the answer is
+"the same one", the instrument is measuring the wrong thing. This is the sibling of
+[a log line is only evidence if one build could have printed it](#a-log-line-is-only-evidence-if-one-build-could-have-printed-it):
+there the string could not distinguish two builds, here the number could not distinguish two
+outcomes.
+
+### A desk reproduction can be biased in exactly the direction that confirms you
+
+The same investigation built an offline reproduction from a recorded DNG and matched the
+shipped artefact to 3.2/255 mean absolute error — close enough to prove which code path
+produced the image, and it did. The same harness then endorsed an anchor that did nothing on
+hardware. Reconstructing sensor codes meant inverting a 10-bit log table, and the inversion
+took the first table entry `>=` the target, which rounds every sample **up** by most of a step
+near the top. That is a fraction of a percent, entirely invisible in the fit quality, and it
+sat precisely on the axis the decision turned on. Rounding to nearest made desk and hardware
+agree again.
+
+So: a reproduction's agreement with reality on the whole is not agreement on the axis your
+decision depends on. Before trusting one to choose a threshold, check the reconstruction for
+bias *in that variable specifically* — a systematic offset survives every aggregate check you
+are likely to run, because aggregates average it away. This sharpens
+[reconstructed numbers are not measured numbers](#reconstructed-numbers-are-not-measured-numbers):
+there the reconstruction was merely imprecise; here it was precise, convincing, and wrong one
+way.
+
 ### What held, and why it held
 
 Not every prediction broke. A finding that one particular subscriber, if it ever raised an
