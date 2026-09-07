@@ -191,6 +191,29 @@ are likely to run, because aggregates average it away. This sharpens
 there the reconstruction was merely imprecise; here it was precise, convincing, and wrong one
 way.
 
+### A guard that reads the present cannot defend against a job that runs later
+
+Two fixes for the same bug both checked the right thing at the wrong moment. `--job-mode=fail`
+and `systemctl is-active` were each a correct statement about the instant they ran — but the
+thing they guarded was a systemd *job*, which executed five seconds later under conditions
+neither could see. The getty start requested while CineMate was stopping was right when it was
+asked for and fatal when it ran: `Before=getty@tty1.service` parked the job behind
+cinemate-autostart's own start, released it 18–30 ms after the new instance came up, and
+`Conflicts=` then stopped what it had just started.
+
+Before trusting a check, ask when the work it guards actually executes. If you are handing work
+to a queue — systemd jobs, timers, thread pools, deferred callbacks — the guard belongs where
+the work runs, or it must test something that is still true then. Here only the job queue
+itself (`systemctl list-jobs`) could tell a restart from a stop; the unit's *state* said
+`deactivating` for both.
+
+Corollary: **a path that works is not an immune path.** "Restarting from the recovery console
+works" turned out to mean CineMate was already down each time, so that restart had no stop
+half and never exercised the failing code at all. Before treating a working path as evidence,
+check that it exercised the failing half.
+
+Full case: [`hardware-log.md`](hardware-log.md), 2026-09-07.
+
 ### What held, and why it held
 
 Not every prediction broke. A finding that one particular subscriber, if it ever raised an
