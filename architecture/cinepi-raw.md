@@ -40,7 +40,11 @@ nothing is dropped when a take starts while the previous take is still flushing 
 blocks the record trigger while the previous take's write buffer is still draining, so by the
 time a new start edge arrives, the RAM buffer is already empty. That is a real cross-repo
 interlock, and it is documented only in that one comment — if you touch either side of it,
-preserve or relocate the explanation, don't just delete it.
+preserve or relocate the explanation, don't just delete it. cinemate's half of it is
+`_buffered_frames_flushing()`, and it now gates two things rather than one: the record
+trigger, and a deferred dynamic-resolution mode change that would relaunch cinepi-raw — the
+relaunch is a SIGTERM, and firing it while the drain is still running truncates the take that
+just ended.
 
 ## Frame lifecycle
 

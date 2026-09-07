@@ -36,8 +36,13 @@ This is the one with the most hidden edits. A new public method on `CinePiContro
 `tools/gui_field_extract.py` gates at zero in CI and will catch a method that's referenced
 somewhere but doesn't actually resolve — but only in the settings-editor catalogue (#3). It
 will not catch a method you forgot to reference anywhere at all — that's a silent no-op
-button, not a CI failure — and **nothing at all checks #5**, `settings.jsonc`'s method
-strings, so a rename there is invisible to every check in the drift job. See
+button, not a CI failure. #5 is checked now, but only in the files this repo ships:
+`_test/test_settings_method_names_resolve.py` resolves every `"method"` string in
+`settings.jsonc`, `resources/settings/settings_default.jsonc` and `settings_komodo.jsonc`
+against `CinePiController` — statically, via `ast`, so answering a question about names
+costs no imports — plus every pot's `setting` against its `set_<setting>()`. It runs in the
+pytest job, not the drift job. What is still unchecked is an operator's own `settings.jsonc`
+on a camera: that file isn't in the tree, so a rename here still breaks it silently. See
 [`../orientation/the-traps.md`](../orientation/the-traps.md) #3 for exactly how that fails in
 practice: `getattr(controller, name)` resolving to `None` produces a log line, not an error,
 and nothing about pressing the button looks different to the operator.

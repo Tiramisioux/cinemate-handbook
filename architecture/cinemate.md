@@ -114,11 +114,25 @@ in the failure modes it's designed for.
 
 | State | Owner | Mechanism |
 |---|---|---|
-| Live camera state (fps, iso, shutter, wb, resolution, `is_recording`, …) | Redis | `RedisController`, keyed by the `ParameterKey` enum |
+| Live camera state (fps, iso, shutter, wb, resolution, `is_recording`, …) | Redis | `RedisController`, keyed by the `ParameterKey` enum — except the parts of "resolution" that are cinepi-raw **launch arguments**, below |
 | Intent (what the operator asked for) | cinemate → Redis | `set_value()` from the controller or an input surface |
 | Actuals (what the sensor/writer actually did) | cinepi-raw → Redis | read by `RedisListener` |
 | User configuration | `settings.jsonc` | `config_loader.py`, read once at boot |
 | Per-surface view state (VU smoothing, lock flags, layout) | Each UI surface | e.g. `SimpleGUI` instance attributes — never reach Redis at all |
+
+**Not all of "resolution" is live state.** Aspect ratio, bit depth (part of `--mode`) and the
+ClearHDR flag (`--hdr sensor`) are fixed when the child is launched, so changing any of them
+means cinemate relaunches `cinepi-raw`; only a same-aspect, same-depth, same-HDR mode change
+is a live record-through reconfigure. `_resolution_change_needs_restart()` is the one test for
+that, and `set_resolution()` has always used it. What is new is that the *automatic* path uses
+it too: dynamic resolution's quality ladder may cross the bit-depth/ClearHDR boundary to reach
+a requested frame rate, so **a plain `set fps` can now relaunch the recorder.** It is not the
+only thing that does — `set_anamorphic_factor()` and `set_log_encode()` relaunch as well.
+
+That test returns `False` outright while recording, so no mode change relaunches mid-take,
+manual or automatic. The ladder has a second guard of its own for the same reason: mid-take
+it and the fps ceiling are pinned to the mode class actually running, and a change held back
+that way settles in `stop_recording()` once the write buffer has drained.
 
 `RedisController` is more than a thin client: it keeps a **local cache** primed at startup,
 `get_value()` reads that cache (not Redis — see

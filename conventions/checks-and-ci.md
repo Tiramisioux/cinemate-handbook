@@ -101,8 +101,10 @@ exact build/test loop.
    at all, and that `rec` is among the names it parsed, before it compares anything.
 3. Decide gate or ratchet. If the codebase is already clean, gate at zero. If there's existing
    debt, ratchet at the current count and say so in a comment, the way `redis_key_diff.py` does.
-4. Wire it into `.github/workflows/checks.yml` under the `drift` job (or its own job, if it
-   needs something the others don't — like cinepi-raw's checkout).
+4. If you wrote a `tools/` script, wire it into `.github/workflows/checks.yml` under the
+   `drift` job (or its own job, if it needs something the others don't — like cinepi-raw's
+   checkout). A `_test/` guard needs no wiring at all: the `pytest` job already runs the whole
+   directory.
 5. Tighten ratchets over time as the underlying debt is paid down — see the `gui_field_extract`
    history above for the shape this takes.
 

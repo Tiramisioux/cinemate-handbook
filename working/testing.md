@@ -2,15 +2,17 @@
 
 ## cinemate: the whole suite is portable
 
-`_test/` (905 tests, 405 subtests, a few seconds, nine `pip` packages, no Raspberry Pi) runs
+`_test/` (1132 tests, 1337 subtests, a few seconds, nine `pip` packages, no Raspberry Pi) runs
 the same way locally and in CI — reconfirmed directly against `origin/dev`. A 2026-08-23
 hardware pass (system-review's PI-002) matched the off-hardware run exactly at the time: 381
-passed / 241 subtests, zero skips either way. The suite has since grown roughly 2.5x without a
+passed / 241 subtests, zero skips either way. The suite has since grown roughly 3x without a
 repeat hardware pass, so treat "identical on the Pi" as confirmed at that earlier count, not
 today's — but nothing about *how* tests get added has changed, including the newer
 drift-guard tests (`test_installed_files_drift.py`, which checks `installed_files.py`'s
-`INSTALLED_FILES` list against the Makefile's own `install` target): still no camera, no live
-Redis, no GPIO. **There is no hardware-only subset today.** Keep it that way: a test that needs
+`INSTALLED_FILES` list against the Makefile's own `install` target, and
+`test_settings_method_names_resolve.py`, which resolves every `"method"` string in the three
+shipped settings files against `CinePiController` by parsing it with `ast` rather than
+importing it): still no camera, no live Redis, no GPIO. **There is no hardware-only subset today.** Keep it that way: a test that needs
 hardware cannot run in CI, and CI is the only thing that actually runs these tests at all.
 
 The house pattern is `unittest`, with hardware-only modules (`gpiozero`, `sugarpie`, `smbus`,
