@@ -80,6 +80,36 @@ clearer consistency problems in the codebase:
 If you're debugging "why doesn't this value update", check which of the four patterns is in
 play before assuming `RedisController`'s cache is involved at all.
 
+## Some keys are settings, not signals — and writing them does nothing until the next boot
+
+The four patterns above are about *writing*. There is a separate question on the read side:
+**when does a written key take effect?** For most keys the answer is "next time something
+reads the cache", which is soon. For a few it is "next boot", and nothing distinguishes them
+by name.
+
+`dynamic_resolution_enabled` and `dynamic_resolution_priority` are the worked example.
+`CinePiController` reads each **once**, at startup (`_get_startup_dynamic_resolution_enabled`,
+`_get_startup_dynamic_resolution_priority`), into a plain attribute, and republishes it on
+change. Nothing subscribes to either key. So:
+
+- `redis-cli set dynamic_resolution_enabled 1` updates Redis and the running camera ignores
+  it. The attribute is unchanged, and so are the values derived from it — `fps_max` and the
+  fps step table, which `set_dynamic_resolution_enabled()` recomputes and a raw write does not.
+- The write is **not** a no-op, which is the part that bites. These keys deliberately outrank
+  `settings.jsonc` at startup, so the value you wrote takes effect at the *next reboot* — the
+  command appears to fail, and then a week later the camera boots into it.
+- The only correct way to change one live is the dispatcher: `set dynamic resolution 1`,
+  `set dynamic resolution priority resolution`. That path sets the attribute, refreshes the
+  derived state, and persists the key.
+
+Seen in the field 2026-09-07: an operator's camera had `dynamic_resolution_enabled = 0`
+persisted from an earlier session while `settings.jsonc` said `true`, and the feature had been
+silently off across reboots. Nothing about that needed hardware to explain — the precedence and
+the once-at-startup read are both plain in `cinepi_controller.py` — but no one had looked,
+because the settings file said the feature was on and that reads like an answer. Before
+concluding a settings file is wrong, check whether a persisted override is outranking it; and
+before writing a key to fix something, check whether anything reads it after startup.
+
 ## `awb` is a trap
 
 It looks like the white-balance control. It isn't reachable — cinemate drives colour through

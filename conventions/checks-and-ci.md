@@ -13,7 +13,7 @@ Defined in `.github/workflows/checks.yml`, all on plain `ubuntu-latest`, none ne
 
 | Job | What it runs | What it actually protects |
 |---|---|---|
-| `pytest` | The full `_test/` suite (~900 tests) | The Python behaviour the tests cover — portable by design, no hardware, no Redis server, no GPIO. See [`testing.md`](../working/testing.md). |
+| `pytest` | The full `_test/` suite (~1130 tests) | The Python behaviour the tests cover — portable by design, no hardware, no Redis server, no GPIO. See [`testing.md`](../working/testing.md). |
 | `ruff` | `ruff check src/` | Style, unused imports, and — critically — bare `except:` and silent `except: pass`, which enforces the "fail visible" principle mechanically (see [`philosophy.md`](philosophy.md)). |
 | `shellcheck` | Every `.sh` file in the repo | The installer and helper scripts stay shell-correct; this is the best-maintained corner of the codebase and this job is why. |
 | `mkdocs` (in `docs.yml`) | `mkdocs build --clean` | The published documentation site still builds — every PR, not just pushes to `main`/`dev`. Publishing itself is gated to `main` only. |
@@ -90,6 +90,15 @@ exact build/test loop.
 2. Write a small, standard-library-only script under `tools/` (cinemate) that verifies it and
    exits non-zero on disagreement. Keep it dependency-free — it has to run in CI without a
    fragile install step.
+
+   **Or write it as a test under `_test/`**, which is the right home when the check needs to
+   reason about code structure rather than scrape text — `test_settings_method_names_resolve.py`
+   parses `cinepi_controller.py` with `ast` to ask whether a name is defined on the class,
+   which is a question a grep answers badly. Tests get the pytest job for free and cost no new
+   CI wiring, but they are invisible to anyone reading `tools/` to find out what is guarded, so
+   say in the module docstring which gap the check closes and which it leaves open. Either way
+   the "must fail, not pass" rule below applies: that file asserts it found a method string
+   at all, and that `rec` is among the names it parsed, before it compares anything.
 3. Decide gate or ratchet. If the codebase is already clean, gate at zero. If there's existing
    debt, ratchet at the current count and say so in a comment, the way `redis_key_diff.py` does.
 4. Wire it into `.github/workflows/checks.yml` under the `drift` job (or its own job, if it

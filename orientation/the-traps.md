@@ -31,8 +31,21 @@ new input surface, decide up front whether it needs the dispatch lock.
 Button and menu actions in `settings.jsonc` are strings resolved with
 `getattr(controller, name)`. A name that doesn't resolve produces no error, no log line,
 nothing — just a control that silently does nothing when pressed. This has shipped at least
-once (`set_log`). If you rename a controller method, grep `settings.jsonc` and the settings
-editor's catalogue before you do — nothing else will catch it for you at this dispatch layer.
+once (`set_log`).
+
+Partly guarded now, and the shape of the guard is the point.
+`_test/test_settings_method_names_resolve.py` walks every `"method"` string in the three
+**shipped** settings files (`settings.jsonc`, `settings_default.jsonc`,
+`settings_komodo.jsonc`) plus the pot `setting` names, and fails with the file, the JSON path
+and the name it could not find. Rename a controller method without updating those and CI
+stops you.
+
+**It does not guard the camera.** An operator's `settings.jsonc` on a Pi is their own file,
+never seen by CI, and it is exactly where the interesting wiring lives — a rig with eight
+buttons and a quad rotary is describing controller methods nothing has ever validated. The
+settings editor's catalogue is checked separately (`tools/gui_field_extract.py`, gated at 0),
+but that is a different list. So: if you rename a controller method, the shipped files will
+now tell you. Nothing will tell the operator whose rig quietly stops responding.
 
 ## 4. One process owns the display
 

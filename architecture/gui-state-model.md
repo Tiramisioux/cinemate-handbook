@@ -5,7 +5,7 @@ treating them as if they were is the mistake this page exists to prevent.
 
 | Surface | What it is | State model |
 |---|---|---|
-| 1. HDMI GUI | `simple_gui.py`, a `Thread` subclass rasterising via PIL to `/dev/fb0` | `populate_values()` — a single dict, 85 fields (mechanically counted by `tools/gui_field_extract.py`, a lower bound: dynamically-built keys are invisible to it) |
+| 1. HDMI GUI | `simple_gui.py`, a `Thread` subclass rasterising via PIL to `/dev/fb0` | `populate_values()` — a single dict, 88 fields (mechanically counted by `tools/gui_field_extract.py`, a lower bound: dynamically-built keys are invisible to it) |
 | 2. Web GUI | Flask + Socket.IO | **The same dict** — consumed verbatim |
 | 3. Settings editor | Flask, edits config | `settings.jsonc` + `config.txt` + the RAW pane (`raw_files.py`, browse/download/delete/format) + the Playback pane (`playback.py`, per-clip DNG/WAV review) — files on disk |
 | 4. Recovery console | Standard-library-only, isolated on its own port | The same two files, plus systemd state and the journal |
@@ -18,7 +18,7 @@ both surfaces the same way" — a question this project has explicitly asked its
 already half true, and the half that's true is the expensive half: a shared **state** model
 already exists. What's duplicated is **presentation** — colours, labels, and layout.
 
-Of the 85 fields, 74 reach the web template (named verbatim in it); the 11 that don't fall
+Of the 88 fields, 77 reach the web template (named verbatim in it); the 11 that don't fall
 into two groups: plain label text (accidentally duplicated as HTML text nodes, currently in
 agreement but one edit from drifting), and recording-integrity counts that the HDMI GUI shows
 as raw numbers and the web GUI shows only as latched pass/fail badges — a real capability
