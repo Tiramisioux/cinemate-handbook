@@ -64,6 +64,30 @@ including which rejection grounds were later contradicted by hardware measuremen
 held anyway — see
 [`../lessons/what-the-pi-taught-us.md`](../lessons/what-the-pi-taught-us.md).
 
+## Changing the settings editor's wording
+
+The editor's prose — pane headings, pane descriptions, card labels, card help,
+note boxes, tab labels, sidebar titles and blurbs — is **not in the template**. It lives in
+`resources/gui-text/*.md` in the `cinemate` repo, one markdown file per sidebar group, and
+`src/module/app/gui_text.py` reads it when the settings-editor blueprint is registered, i.e.
+at CineMate start. The template carries only `{{ t('key') }}` lookups.
+
+So: to change a sentence, edit the markdown and restart CineMate. Do not add prose to
+`templates/settings_editor.html` — `tools/gui_text_check.py` fails the build if you do, along
+with a key the template asks for that no markdown file defines, and a string the markdown
+defines that nothing asks for. All three are gated at zero.
+
+Two things deliberately stayed in the template. Strings JavaScript rewrites at runtime
+(`cfgStatusText`, `statusText`, `pbLockBody`, `pbLockTitle`) keep their first-paint markup,
+because moving them would make two homes for one sentence when the script already owns the
+other one; the check allow-lists exactly those ids. And short control labels — button text,
+`.eyebrow` captions — were left alone: the move was scoped to prose, not to every word on the
+page.
+
+A string the markdown cannot supply renders as a red `[missing text: key]` marker rather than
+a blank space, on the same reasoning as everything else here: a gap nobody notices is worse
+than a fault somebody reports.
+
 ## Scope exclusion
 
 The settings editor and the recovery console are **not** part of this state model — they edit

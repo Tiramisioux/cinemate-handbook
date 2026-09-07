@@ -17,11 +17,11 @@ Defined in `.github/workflows/checks.yml`, all on plain `ubuntu-latest`, none ne
 | `ruff` | `ruff check src/` | Style, unused imports, and — critically — bare `except:` and silent `except: pass`, which enforces the "fail visible" principle mechanically (see [`philosophy.md`](philosophy.md)). |
 | `shellcheck` | Every `.sh` file in the repo | The installer and helper scripts stay shell-correct; this is the best-maintained corner of the codebase and this job is why. |
 | `mkdocs` (in `docs.yml`) | `mkdocs build --clean` | The published documentation site still builds — every PR, not just pushes to `main`/`dev`. Publishing itself is gated to `main` only. |
-| **contract drift** | Six custom stdlib-only scripts under `tools/` | The cross-file and cross-repo facts that keep silently disagreeing — see below. This job is this review's real, lasting legacy. |
+| **contract drift** | Seven custom stdlib-only scripts under `tools/` | The cross-file and cross-repo facts that keep silently disagreeing — see below. This job is this review's real, lasting legacy. |
 
 ## The contract-drift job, in detail
 
-Six checks, each aimed at a specific place this codebase has drifted before:
+Seven checks, each aimed at a specific place this codebase has drifted before:
 
 - **`docs_drift_check.py --strict`** — docs match the code (settings keys, controller
   methods documented, etc.).
@@ -40,6 +40,13 @@ Six checks, each aimed at a specific place this codebase has drifted before:
   the settings editor offers per sensor) live only in `resources/sensors.json`; this fails if
   the settings-editor template hardcodes one of those numbers instead of reading it from the
   database. Gated at zero.
+- **`gui_text_check.py --strict`** — the settings editor's copy still lives only in
+  `resources/gui-text/*.md`. Gated at zero three ways: a key the template asks for and the
+  markdown does not define, a string the markdown defines that nothing asks for, and a
+  sentence typed straight into the template instead of the markdown. It also asserts a floor
+  of 200 lookups found, so a change to the `{{ t('...') }}` syntax fails as "suspect this
+  extractor" rather than passing on two empty sets — see "Two ways a check quietly stops
+  protecting you" below.
 - **`redis_key_diff.py --max-unreferenced 12`** — needs both repositories checked out,
   because the key contract spans them (see
   [`../architecture/redis-contract.md`](../architecture/redis-contract.md)). This one is a
