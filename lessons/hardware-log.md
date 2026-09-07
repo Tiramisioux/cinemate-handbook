@@ -1659,3 +1659,100 @@ like confirmation*:
 Anchors: b=1 2900 measured from two takes; b=4 2582 derived from the b=1 peak-to-floor ratio
 applied to the binned peak, then confirmed in place on hardware by the line above rather than
 by a binned-take measurement.
+
+## 2026-09-07 — restart drops to a shell prompt: a getty start that is right when asked for and wrong when it runs
+
+**Tested:** `cinemate` on `dev` at `68b924a7`, Pi 5 (`pi@cinepi.local`), imx585. Restarting
+CineMate from the settings editor, from the CLI, from the recovery console, and by the exact
+`restart_cinemate()` command; plus a plain `systemctl start`, a plain `systemctl stop`, and a
+job-queue probe injected into the installed `cinemate-console-handoff.sh`.
+
+**Worked:** booting, always. A restart issued while CineMate was already *down* — including
+every restart from the recovery console during this session. A plain `systemctl stop` correctly
+handing tty1 back to a getty.
+
+**Did not work:** every restart issued while CineMate was *running*. The new instance reached
+"Initialization Complete" with Flask serving, systemd logged `Started`, and 18–30 ms later
+`Deactivated successfully` — leaving the operator at a login prompt on tty1. Both fixes already
+shipped for this (`9cd5de33`'s `is-active` guard, `68b924a7`'s systemd suppression of
+`restore_local_console_prompt()`) were verified installed via `sudo make install` and did not
+help.
+
+**Why:** the getty start on the stop path is correct when it is *asked for* and wrong when it
+is *run*, and nothing evaluated at request time can tell the difference.
+`cinemate-autostart.service` declares both `Before=…getty@tty1.service` and
+`Conflicts=getty@tty1.service`. The `Before=` ordering parks a getty start job behind this
+unit's own start job and releases it the instant that start job completes — into a fully-up
+CineMate, which `Conflicts=` then stops. Straight off the rig, pressing "Restart Cinemate":
+
+```
+02:53:47.995  Stopping cinemate-autostart.service...
+02:53:50.082  ExecStopPost handoff: systemctl start getty@tty1.service   <- queued
+02:53:50.092  Starting cinemate-autostart.service...
+02:53:55.898  Started cinemate-autostart.service        <- fully up
+02:53:55.916  Started getty@tty1.service                <- +18 ms
+02:53:55.978  cinemate-autostart.service: Deactivated successfully.
+```
+
+Measured four times across two different getty-start sites: +18, +23, +29, +30 ms after
+CineMate's own `Started`. That regular ~20–30 ms release is the signature of an ordering
+dependency being satisfied, not of a race.
+
+Why the two shipped guards could not reach it, both of which read the *present*:
+
+- `--job-mode=fail` refuses only while a start job for the conflicting unit is already
+  **pending**. During a `systemctl restart`, systemd does not enqueue the start half until the
+  stop has finished — so at ExecStopPost time there is nothing pending to refuse.
+- `is-active` returns `deactivating` for a stop and a restart alike.
+
+The **job queue** does distinguish them. Probed from inside the handoff script at exactly the
+line that starts the getty, during a restart:
+
+```
+PROBE is-active=deactivating
+PROBE job: 7216 cinemate-autostart.service restart running
+```
+
+Two independent sites issue that fatal request: the `ExecStopPost` handoff, and — for a
+foreground CineMate that the run lock's `SIGTERM` takes down while the service is coming up —
+`restore_local_console_prompt()` in `main.py`. The second is the one that made the earlier
+investigation call the run-lock SIGTERM "downstream of the failure": it is not downstream, it
+is a trigger. Fix (`718e55bd`): both sites now yield when a `start`/`restart` job for
+`cinemate-autostart` is queued.
+
+**A trap worth more than the fix — never add an `ExecStartPost` to this unit.** The obvious
+place to cancel the parked job is on the way up: `Before=` guarantees the job is still
+cancellable from an `ExecStartPost`, which is provably inside the window. It works on paper and
+it kills CineMate outright. The unit sets `StandardInput=tty-force` with `TTYVHangup=yes`, so
+systemd hangs up `/dev/tty1` for **every** Exec command in it; an `ExecStartPost` runs while
+`main.py` is alive and owns that tty, and `main.py` takes the SIGHUP. `ExecStartPost=/bin/true`
+is enough to do it:
+
+```
+Process:  ExecStartPost=/bin/true (code=exited, status=0/SUCCESS)
+Main PID: 24488 (code=killed, signal=HUP)
+Duration: 23ms
+```
+
+`ExecStartPre` and `ExecStopPost` are safe only because `main.py` is not running yet, or not any
+more. A test now pins the unit against regrowing an `ExecStartPost`.
+
+**Two method notes:**
+
+- **"It works from the recovery console" was a confirmation, not a counter-example.** CineMate
+  happened to be already dead each time, so `systemctl restart` had no stop half, hence no
+  `ExecStopPost`, hence nothing parked. Same reason "start it again and it works" and "I have to
+  do it twice". Before treating a working path as evidence of immunity, check whether it
+  exercised the failing half at all.
+- **Three desk hypotheses were wrong before anyone read the journal, and a fourth was wrong
+  after.** `journalctl -u cinemate-autostart -b` settled the mechanism in one look; the
+  ExecStartPost approach still had to be falsified *on hardware*, and `/bin/true` did it in one
+  command. Reach for the smallest possible probe that can falsify the fix, not just the one that
+  is consistent with it.
+
+**Confirmed by:** operator reproduced it live mid-session ("now i pressed the restart cinemate
+button, and we have the cli"), captured in the journal at 02:53:47–02:53:55. Fix verified by the
+assistant on the rig after `sudo make install`: three consecutive restarts issued while running
+all survive with `getty=inactive` and no getty between `Started` and `Stopped`; a plain
+`systemctl stop` still returns the console. Local gates green (1103 tests, docs drift, installer
+parse). Not yet re-confirmed by the operator from the settings-editor button itself.
