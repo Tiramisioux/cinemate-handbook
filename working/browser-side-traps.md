@@ -10,6 +10,7 @@ screen at `/?xp=1` in an iframe, so a trap in `template.html` is a trap on both 
 | Trap | Symptom | Invisible to |
 |---|---|---|
 | MJPEG `<img>` accepted-and-silent | preview black from boot, recovers only on a resolution change | every event handler — nothing fires |
+| identical-URL `src` reset while a request is in flight | every recovery path runs on time and reconnects nothing | reading the code; the page-side log looks perfect |
 | No iOS Fullscreen API for an `<img>` | button flashes on tap, does nothing | desk browsers, which all have the API |
 | `height: 100%` on a phone | bottom row sits behind the browser toolbar, unscrollable | device emulation — it has no toolbar |
 | Grid automatic minimum size | preview squeezed to 0px, drawer never scrolls | reading the CSS; only measured boxes show it |
@@ -22,12 +23,27 @@ that connects early and simply makes it wait for the first real frame, so a pers
 address during boot does not land on a 404. The GUI's `<img>` used to depend on exactly that
 404: it fired `error`, and the error handler re-armed the retry. Accepted-and-silent fires
 `error` never, `load` never, and nothing at all — so nothing retried, and the preview stayed
-black until something else called `reloadStreams()`. A resolution change does. That is the
-whole of the "it only comes up if I change resolution" reproduction.
+black.
 
-The fix is a **first-frame watchdog** (`armStreamWatchdog`), armed whenever a `src` is set and
-disarmed for good by the first frame, plus a periodic sweep for `naturalWidth === 0`. Two
-measured facts govern how it has to be written:
+**Be careful about what "it only comes up if I change resolution" is evidence for.** A
+completed resolution switch emits two things: `reload_stream`, which calls `reloadStreams()`,
+and — two seconds later — `reload_browser`, which reloads the whole page (`module/app/__init__.py`;
+`main/events.py` emits the same event after any white-balance change). Only the page reload
+ever recovered the picture, because a fresh document has no pending request to join. Reading
+the reproduction as evidence for `reloadStreams()` is what produced a first-frame watchdog
+that fired perfectly and could not work — see the next section. When a symptom clears after an
+action that does several things, name which of them you are crediting.
+
+The fix is in two halves, and the second one is the one that actually reconnects:
+
+1. a **first-frame watchdog** (`armStreamWatchdog`), armed whenever a `src` is set and
+   disarmed for good by the first frame, plus a periodic sweep for `naturalWidth === 0` — this
+   is the *detection*;
+2. a `scheduleStreamReload` that issues a request at all — see
+   "an identical-URL `src` reset issues no request" below. Shipped alone, (1) detected the
+   dead stream every four seconds and acted on it with a no-op for two days.
+
+Two measured facts govern how the watchdog has to be written:
 
 - **`load` fires once per connection, not once per frame.** Ten seconds of a running stream
   produced **zero** `load` events. It is a first-frame signal and nothing more; it cannot be
@@ -41,7 +57,12 @@ measured facts govern how it has to be written:
   still coming up after a restart, is the one with nothing watching it.
 
 Six signals feed recovery, and each is blind to something. Do not delete one because another
-looks like it covers the case:
+looks like it covers the case.
+
+**They are six triggers into one effector, though, and that distinction is load-bearing.**
+Every row below ends in the same `scheduleStreamReload`. Redundant detection buys nothing if
+the single action they share does not work, which is exactly the state this table described
+for two days. When you add a seventh row, ask what it can *do*, not only what it can see:
 
 | Signal | Fires when | Blind to |
 |---|---|---|
@@ -59,8 +80,46 @@ misses, the server answers 404 and closes. Because every recovery path funnels t
 function, a cache-buster did not merely fail to help: it replaced a working MJPEG connection
 with a permanent 404, including in the case cinepi-raw handles well on its own (it keeps the
 listener alive across a camera reconfigure, so the old connection would have survived).
-Dropping `src` first — the thing the cache-buster was there to achieve — is what makes the
-browser re-request an identical URL.
+The cache-buster was doing something real, though, and taking it out silently removed it: it
+made the URL *different*.
+
+## An identical-URL `src` reset issues no request
+
+**Set an `<img>` back to a URL whose previous request is still in flight and the browser joins
+that pending request instead of opening a connection.** Which is precisely the
+accepted-and-silent case above — the case all of this recovery machinery exists for.
+
+Measured in Chromium against a deliberately silent MJPEG server, one page, one timer, two
+`<img>`s as a controlled A/B:
+
+| Reset | Requests actually issued |
+|---|---|
+| `removeAttribute('src')` then re-set the **identical** URL, same task | **1**, across 29 retries |
+| re-set a **unique** URL each time | one per retry (21/21) |
+| identical URL with a changing `#fragment` | **1** — Blink strips the fragment for resource identity |
+| `src = <blank data: URI>` then back to the identical URL | **1** — assigning a new src does not tear the old request down |
+| `removeAttribute('src')`, re-set the identical URL **in a later task** | one per retry |
+
+Replacing the whole `<img>` element does not help either: a fresh element joins the same
+pending request. Dropping `src` *does* abort it — but only once the removal has been
+processed, so the re-request has to happen in a later task. Same task, and the abort and the
+re-request collapse into no network activity at all.
+
+So `scheduleStreamReload` is two timers now — tear down, settle 250 ms, re-request — and
+anything asking "is a reload already under way?" has to see both (`streamReloadPending`), or
+it fires a second teardown into the settle gap and cancels the re-request it was waiting for.
+250 ms is what measured clean; a bare next-task deferral recovered about two thirds of the
+time.
+
+Two things this changes elsewhere. `module/app/__init__.py` deliberately withholds the page
+reload while recording, on the grounds that "`reload_stream` alone covers it" — which was
+false for as long as the reset was a no-op, making a take the one situation with no working
+recovery at all. And the `naturalWidth === 0` sweep's stated purpose, "keep re-issuing the
+request" for an orphan process squatting on `:8000`, was the worst case for the old reset
+rather than a case it handled: an orphan that accepts and never delivers holds the request
+open forever.
+
+Chromium only. Safari is untested here and may differ.
 
 ## iOS has no Fullscreen API for anything but a `<video>`
 
@@ -145,21 +204,27 @@ operator mid-shot is worse than a smaller picture; the settings editor's pane is
 so it pins the stage and lets the page scroll instead. If you change one, check the other —
 they share the file.
 
-## What the four have in common
+## What these have in common
 
 Every one of these was a **silent** failure in a runtime that owed no explanation: no event, no
-console error, no exception that reached anything. Three of the four had a confident desk
-diagnosis that a browser then contradicted, and the fourth (`height: 100%`) was actively
-*confirmed as fine* by emulation. Two working rules follow:
+console error, no exception that reached anything. Most had a confident desk diagnosis that a
+browser then contradicted; `height: 100%` was actively *confirmed as fine* by emulation; and
+the identical-URL reset was confirmed as fine by a page-side log showing every retry firing on
+schedule. Three working rules follow:
 
 - **A missing event is not the same as a working stream.** When recovery hangs off an event,
   ask what happens in the case where the event never fires at all — then arm a timer for that
   case and clear its flag on every retry.
+- **A retry that runs is not a retry that happened.** The rule above is necessary and was not
+  sufficient: the timer fired every four seconds and its action issued no request. Verify a
+  recovery path at the layer it is supposed to act on — count connections at the server, or
+  watch the network panel — not by instrumenting the code that calls it. A `console.log` in the
+  retry proves the retry ran, which is the part that was never in doubt.
 - **Measure the box, not the CSS.** Grid and flex failures show up as numbers
   (`getBoundingClientRect`, `naturalWidth`) long before they show up as anything readable in a
   stylesheet, and both grid traps here look correct on the page.
 
-Neither of these is checkable in CI today — the browser layer has no automated check at all,
+None of these is checkable in CI today — the browser layer has no automated check at all,
 which is worth remembering before treating a comment in `template.html` as a guarantee (see
 [`../conventions/checks-and-ci.md`](../conventions/checks-and-ci.md): a comment cannot fail).
 
