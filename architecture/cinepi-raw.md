@@ -99,6 +99,43 @@ in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for the measuremen
 is built on, and the entry immediately above it (2026-09-05) for why
 the mode toggle had stopped reading `options_->thumbnail` at all in the meantime.
 
+### A fourth mode: colour JPEG
+
+`thumbnail` 3 (`jpeg`) reads the same lores plane and converts it to RGB the same way colour
+(2) does, then hands each row to libjpeg as a baseline JPEG (YCbCr 4:2:0, quality 85 —
+`kThumbnailJpegQuality` in `dng_encoder.cpp`, chosen from the three quality settings actually
+measured) instead of writing the raw bytes. `cinepi/dng_thumbnail.hpp` is still the single
+source for this: `thumbnail_geometry()` grew a `compressed` field, and its tag emission moved
+into a new pure function, `add_thumbnail_ifd1_entries()`, which `dng_save()` now calls for
+every mode instead of building IFD1's tags inline the way it used to. IFD1's tag layout differs
+only for mode 3: compression 7 instead of 1, photometric 6 (YCbCr) instead of 2 (RGB), and two
+extra tags a JPEG-encoded strip needs (530 YCbCrSubSampling, 531 YCbCrPositioning). The three
+uncompressed layouts (0, 1, 2) are byte-identical to what `dng_save()` wrote before this mode
+existed.
+
+`thumbnail_geometry()`'s `bytes` field means something different for mode 3. For the
+uncompressed modes it is the strip's exact size, always. For JPEG it is a **reservation**, not
+an estimate: the same uncompressed-worst-case number colour would need at that geometry, which
+`setup_encoder()` sizes the take's buffer against and `dng_save()` checks the actual encoded
+size against before ever writing the strip — skipping the thumbnail for that one frame (one
+warning per take, IFD0's next-IFD field left at 0, same as `thumbnail=0`) if a pathological
+frame somehow does not fit, rather than letting `write_pod()` throw and drop the whole frame.
+cinemate's `sensor_detect.thumbnail_plane_bytes()` mirrors this reservation formula for modes
+0–2, but for mode 3 it carries its own, separately-named **estimate** constant instead
+(`THUMBNAIL_JPEG_BUDGET_BYTES_PER_PIXEL = 0.15`, deliberately above the measured 0.04–0.08 B/px
+range) — the reservation and the file-size estimate are different quantities that happen to
+share a source measurement, and conflating them would either waste buffer headroom on every
+take or under-count `file_size` on every one that uses JPEG.
+
+Colour JPEG is the smallest file of the four by a wide margin — measured 9–16 KB per frame at
+640×360, ~3–8 KB at the shipped 320×180 default, against 230,400 B / 57,600 B for mono at the
+same sizes (FINDINGS.md §2b, `development/dng-thumbnail-cost/`) — but the highest CPU per
+frame: the same YUV→RGB conversion colour already pays, plus the JPEG encode itself. That is
+why it stays an opt-in (`set thumbnail jpeg`, or `image_capture.thumbnail: "jpeg"`) rather than
+the default: processor headroom is this camera's stated constraint, and colour (2, uncompressed)
+does not spend any of it. See `docs/settings-json.md`'s "DNG thumbnails" section (cinemate repo)
+for the full four-way cost table and how-to-choose guidance.
+
 ## ClearHDR: sensor HDR, live knobs, and the CCMP12 decompand
 
 `--hdr off|auto|sensor|single-exp` (`cinepi_options.cpp`) selects sensor HDR

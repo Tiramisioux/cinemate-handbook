@@ -117,11 +117,27 @@ handler for the key restarts the camera on any live write, because a mid-take re
 invalidate the buffer size `setup_encoder()` already committed to for the take in progress. So
 `redis-cli set thumbnail_size 2` (published) *does* take effect — unlike the dynamic-resolution
 keys above, nothing here silently ignores the write — but it costs a camera restart, which is
-why the key has no CLI verb or settings-editor field: `settings.jsonc` is the only place to
-change it. Contrast `thumbnail` (0 off / 1 mono / 2 colour, validated by
-`thumbnail_startup_value()`), which is genuinely live: cinepi-raw's pub/sub handler applies it
+why the key has no live CLI verb: a settings-editor field exists (Resolution & sensor → DNG
+thumbnails), but it is a `settings.jsonc` field that takes effect on the next Save-triggered
+restart, the same as any other settings-only knob, not a live write. Contrast `thumbnail`
+(0 off / 1 mono / 2 colour / 3 colour JPEG, validated by `thumbnail_startup_value()` /
+`parse_thumbnail_mode()`), which is genuinely live: cinepi-raw's pub/sub handler applies it
 immediately, with no restart, though `setup_encoder()` still only reads it once per take — see
 [`cinepi-raw.md`](cinepi-raw.md#the-embedded-thumbnail-ifd1) for why.
+
+**`thumbnail` is also a words-vs-ints seam, not just a live-vs-boot one.** `0..3` is the only
+thing on the wire — cinepi-raw's `sync()` and its `CONTROL_KEY_THUMBNAIL` pub/sub handler both
+`stoi()` the value, with no word parsing on that side at all — but `image_capture.thumbnail` in
+`settings.jsonc`, and `set thumbnail`, both speak the words `off`/`mono`/`colour`/`jpeg` (Phase
+2, 2026-09-13). cinemate is the only side that translates: `parse_thumbnail_mode()`
+(`config_loader.py`) turns a word (or an int, or a numeric string) into `0..3` before anything
+reaches Redis, at boot (`thumbnail_startup_value()`) and at `set_thumbnail()`
+(`cinepi_controller.py`) alike. A raw `redis-cli set thumbnail jpeg` published straight at
+cinepi-raw is **not** understood — `stoi("jpeg")` throws, caught and ignored by the pub/sub
+handler's own guard, so the write is silently dropped and the mode does not change. Reach
+`thumbnail` by way of cinemate (`set thumbnail jpeg`, or the settings file) if you want the
+word accepted at all; `redis-cli set thumbnail 3` (an int) is the only raw-Redis form
+cinepi-raw itself understands.
 
 ## `awb` is a trap
 
