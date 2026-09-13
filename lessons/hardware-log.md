@@ -2073,3 +2073,82 @@ file was backed up to `~/settings.jsonc.before-thumbnail-update.bak` on the Pi b
 copy replaced it, so the evidence survives. Documented for operators in
 `docs/settings-editor.md`'s save section. The real fix — merging into the file on disk instead of
 replacing it — is not written.
+
+## 2026-09-14 — the ClearHDR clamp: three anchors, all wrong, and the diagnostic that could not say so
+
+**Tested:** imx585 colour, all four ClearHDR modes (16-bit 4K and HD, 12-bit 4K and HD),
+`hdr_blend=5`, `hdr_gain_adder=1`, ISO 640–3200, on `cinepi-raw`
+`feature/clearhdr16-preview-clamp` (`daa5243` → `be711df` → `836f58c` → `6553e88` →
+`ea0077e`), cinemate `dev`. Subjects: a blown sky (the 2026-09-13 takes) and a tungsten lamp.
+
+**Worked:** both 16-bit modes, operator-confirmed clean. The blown core of the 12-bit modes,
+also confirmed — the pink that started this is gone in all four modes.
+
+**Did not work:**
+
+- **Every anchor, three times.** 2900/2582 shipped; then 2582 → 2344 measured from one scene;
+  each was above the clamp for the next scene and left a pink band under it.
+- **The convergence rule's first thresholds** (level gate 0.15 of full scale) — white speckle
+  in every HDR mode, including the two that had been clean.
+- **Still open:** the 12-bit boundary between a blown core and a yellow surround is ragged.
+
+**Why:**
+
+1. **The clamp code is not a sensor constant.** Measured on this rig, same mode and settings:
+   54100 at analogue gain code 71, 48600 at code 80; ~2298 in 12-bit HD where the table said
+   2582. It moves with gain, with the HG/LG blend and with the scene. An anchor is a
+   measurement of one moment, shipped as if it were a property.
+2. **The invariant is that the channels AGREE, not the level they agree at.** Second-brightest
+   over brightest, linear above black, measured per region across three takes:
+
+   | region | 2nd/max | level | verdict |
+   |---|---|---|---|
+   | pink lamp core, 12-bit HD | 0.996 | 0.56 | clamped |
+   | orange surround of that lamp | 0.912 | 0.35 | real colour |
+   | pink sky, 16-bit 4K | 0.998 | 0.83 | clamped |
+   | **genuinely white subject, 16-bit** | **0.659** | **0.74** | **real white** |
+
+   Row four is the argument: a real white sits at the same level as a clamp, so no anchor can
+   separate them, and the ratio does. Under the shipping AWB gains a neutral subject arrives
+   with R = G/1.8 and B = G/1.7 — channels converge only when something pins them.
+3. **Second-over-max, not min-over-max.** The 12-bit HD lamp pins R and G on one code while B,
+   never near the ceiling, sits at 0.79. Requiring all three to agree missed it entirely and
+   reported zero converged quads while a fifth of the frame was pink.
+4. **One pixel is never a clamp.** A per-pixel rule on noisy data fired on 245 and 498 isolated
+   pixels per frame on the two 16-bit takes. Taking the weakest blend across each 2×2 output
+   block takes that to zero for ~1% of coverage at the blob edge.
+
+**The method failure worth more than the fix — a number that cannot come out wrong is not
+evidence.** The b=4 anchor 2582 was derived from b=1's peak-to-floor ratio and never measured.
+The 2026-09-06/07 entry above records it as "CONFIRMED IN PLACE" because the stage logged
+`highest uncorrected 2581` against `clip anchor 2582`. But `maxUndesaturatedCode()` is the
+highest code that did NOT fully desaturate, and everything at or above the anchor always does
+— so it pins to anchor−1 whenever anything bright sits below the anchor. It reads identically
+when the anchor is correct and when the clamp zone extends 190 codes below it. HD rendered
+pink through that whole band for a week while the log looked like the b=1 success. The lesson
+the 09-06 entry drew — "add the observability that can FALSIFY the fix" — was right, and the
+number it added still could not falsify this one. Check that a diagnostic has a reachable
+failing value before trusting agreement from it.
+
+**Two things this did not change, deliberately:**
+
+- **The recorded DNG still carries the clamp.** Developed in a raw converter, a 12-bit
+  ClearHDR file of a blown lamp is pink: R and G pinned at 36952 with B at 29217, and white
+  balance clips R while G stays near half. The correction is monitoring-only by design. Whether
+  the file should also be neutralised is an open product question, not a defect.
+- **The anchor still runs**, alongside the convergence rule, whichever fires harder, so the
+  hardware-confirmed behaviour of full res and both 16-bit modes could not regress.
+
+**Open, on its own branch:** the 12-bit boundary. For a tungsten subject the yellow surround
+has R≈G naturally, which is the same signature the rule uses, so at the transition both the
+ratio and the level sit mid-ramp and per-pixel noise decides; the 2×2 block then quantises
+that indecision into visible chunks. Erosion is the right tool for isolated noise and the
+wrong one for an edge — it keeps the edge hard and punches holes in it. The direction is to
+feather the matte (widen the ramp, average the blend over a neighbourhood instead of taking
+the weakest) rather than sharpen it.
+
+**Confirmed by:** operator at the camera through the night of 2026-09-13/14 — "clear HDR is
+now ok in 16 bit modes", then "pink is gone in both 12 bit modes", then the boundary report;
+plus a live MJPEG frame pulled from the rig at 03:10 showing a neutral core with a ragged
+edge, against `auto floor 2952, would anchor 2908, clip anchor 2900` in the same moment. The
+ratio table is measured from the three DNGs with rawpy, per region.
