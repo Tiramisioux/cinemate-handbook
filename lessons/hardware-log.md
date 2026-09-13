@@ -1990,3 +1990,44 @@ would cost more.
 (off), `_223955_F01_` (mono), `_224030_F20_` (colour), `_224059_F22_` (jpeg). Builds
 cinepi-raw `17453ce`, cinemate `318a0cf9`. Points back to the two earlier 2026-09-13 entries for
 the cost baseline this extends, and to 2026-09-05 for the toggle question it settles.
+
+## 2026-09-13 — "NO EMBEDDED THUMBNAIL on every take" was a cached browser page, not the encoder or the reader
+
+**Tested:** the operator's camera immediately after the Phase 2 gate above, on the same builds
+(cinepi-raw `17453ce`, cinemate `318a0cf9`). Symptom, reported live: the settings editor's
+Playback pane showed **NO EMBEDDED THUMBNAIL for every take on the card**, including the three
+takes whose files had just been confirmed to carry a valid IFD1.
+
+**Did not work — three confident suspects, all innocent:** the DNG writer (the files were read
+tag-by-tag on the Mac and carried the thumbnail), `dng_preview.read_metadata()` (run on the Pi
+itself against a take on the card, it returned the full thumbnail dict including
+`compression: 7`), and the deployment (`git log -1` showed `318a0cf`, the service was `active`,
+and the journal was clean).
+
+**Worked — the one command that separated server from browser:**
+
+```
+curl -s http://localhost:5000/settings-editor/api/playback/clips | python3 -c "import json,sys; [print(c['source'], c['name']) for c in json.load(sys.stdin)['clips'][-6:]]"
+```
+
+It answered correctly for every take: `thumbnail` for the mono, colour and JPEG takes,
+`decode` for the one recorded with the toggle off. The server had been right the whole time.
+**A hard reload of the page fixed the pane**, operator-confirmed.
+
+**Why:** the Playback pane's *frame* URLs carry `playback.RENDER_TOKEN` (derived from
+`dng_preview.py`'s mtime and size) precisely so an updated decoder cannot serve through a
+browser cache — but the page's own HTML and inline JavaScript carry no equivalent. A browser
+holding the settings editor from before the update keeps running the old page against the new
+API. Nothing below the browser was involved, and nothing in the source could have shown it.
+
+**The reusable part:** when the pane disagrees with the file, **ask the API before reading the
+encoder.** One curl, no browser, and it cleanly splits "the server computed the wrong answer"
+from "the page is showing an old one". Both DNG-side suspects were verified innocent on the Pi
+before anyone thought to suspect the page — the diagnosis ran in the wrong direction for as long
+as it did because a stale page is the one layer that looks identical to a correct one. Written
+up as its own trap in
+[`../working/browser-side-traps.md`](../working/browser-side-traps.md), whose existing sections
+cover MJPEG stream caching but had nothing on page-level caching.
+
+**Confirmed by:** operator, session 2026-09-13 — "hard reload fixed it"; the curl output above,
+pasted live, showing the correct per-take `source` while the pane still said otherwise.

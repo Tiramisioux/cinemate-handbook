@@ -204,6 +204,41 @@ operator mid-shot is worse than a smaller picture; the settings editor's pane is
 so it pins the stage and lets the page scroll instead. If you change one, check the other —
 they share the file.
 
+## The page itself is cached, and only the frames it serves carry a cache-buster
+
+**A browser holding the settings-editor page from before a CineMate update keeps running that
+old page's JavaScript, and nothing on the page tells it to refetch.** The Playback pane's frame
+URLs are protected against exactly this — `playback.RENDER_TOKEN` mixes `dng_preview.py`'s mtime
+and size into every frame URL, so an updated decoder produces new URLs and an old cached frame
+can never be served by new code. The HTML and the inline JavaScript that *request* those URLs
+carry no equivalent.
+
+Observed 2026-09-13, on the camera, immediately after deploying the embedded-thumbnail work: the
+Playback pane reported **NO EMBEDDED THUMBNAIL on every take**, including takes whose files
+demonstrably carried one. The symptom points hard at the writer or the reader, and both were
+innocent. What settled it in one command was asking the API instead of the page:
+
+```
+curl -s http://localhost:5000/settings-editor/api/playback/clips | python3 -c "import json,sys; [print(c['source'], c['name']) for c in json.load(sys.stdin)['clips'][-6:]]"
+```
+
+It answered `thumbnail` for every take that had one and `decode` for the one recorded with the
+toggle off — correct, per take, from the same `frame_source()` the pane reads. A hard reload
+fixed the pane. Nothing was wrong below the browser.
+
+Two rules follow, and the first is the cheap one:
+
+- **When the pane disagrees with the file, ask the API before you read the encoder.** The
+  clips endpoint is one curl, it needs no browser, and it cleanly separates "the server computed
+  the wrong answer" from "the page is showing an old one". Both DNG-side suspects here — the
+  encoder's IFD1 and `dng_preview.read_metadata()` — were verified innocent on the Pi itself
+  before anyone thought to suspect the page.
+- **A render token on the payload does not protect the page that fetches it.** If a change alters
+  what the page's own JavaScript must do with a server field — a new value in `source`, a new
+  key, a renamed one — assume every browser that had the page open is running the old logic
+  against the new data, and say so in the change's own deployment notes. This is the one failure
+  mode where the operator's fix (hard reload) is trivial and the diagnosis is not.
+
 ## What these have in common
 
 Every one of these was a **silent** failure in a runtime that owed no explanation: no event, no
