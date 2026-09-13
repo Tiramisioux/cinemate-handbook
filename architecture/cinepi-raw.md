@@ -153,7 +153,7 @@ being touched. Neither the static post-process file nor the dual-sensor one
 Cinemate writes names the stage; `EnsureFirstPostProcessingStage` inserts it,
 so it runs on defaults unless a file overrides it.
 
-### The clamp zone, and why the preview needs a second correction
+### The clamp zone, and why the preview needs a second correction (both bit depths)
 
 Decompanding fixes the *transfer* but cannot un-clip, and the second half is
 easy to mistake for the first. In 12-bit ClearHDR the HG/LG merge clamps
@@ -190,6 +190,70 @@ just *under* the anchor (e.g. `highest uncorrected 2581` against `clip anchor
 areas are still magenta. The peak alone cannot distinguish those two states —
 see the 2026-09-06/07 entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md),
 where it made two bad anchors look correct.
+
+**16-bit is not unaffected — that was true at one gain, not in general.** The
+same HG/LG merge clamp happens with no compander involved: 16-bit ClearHDR is
+delivered linear, so there is nothing to decompand, but the sensor still
+clamps digitally and the four Bayer samples of a blown quad still converge on
+one code. Under the shipping white-balance gains that equal-code plateau
+overshoots on R and B while G cannot move, and the highlight renders pink —
+the same cast as 12-bit's magenta, from the same mechanism, just with no
+compander in the middle. Confirmed 2026-09-13: two operator takes, 13 minutes
+apart, same mode/blend/gain-adder/shutter, plateaued at raw code 54100 at
+analogue gain code 71 and at 48600 at code 80 — **the clamp code moves with
+gain**, so unlike 12-bit it cannot be a per-binning table entry; a table keyed
+on the wrong axis would be right at one ISO and wrong at the next. See that
+date's entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for
+the full diagnosis, and the entry after it for the fix's hardware verdict.
+
+Two different mechanisms fix the same defect, and the difference follows
+directly from whether there is a compander to re-render through:
+
+- **12-bit** re-renders the lores frame from the raw Bayer through
+  `CcmpPreviewRenderer` (decompand, then white balance, CCM and gamma), and
+  `desaturateHighlight()` blends toward neutral using the **tabulated**
+  per-binning anchor described above.
+- **16-bit** keeps the ISP's own render — it is correct everywhere outside the
+  clamp zone (denoise, sharpening, the tuned CCM and gamma), and re-rendering
+  the whole frame to fix one zone would throw that away for no reason.
+  Instead `clip_neutralise.hpp`'s `HighlightNeutraliser` blends the ISP's YUV
+  toward neutral IN PLACE, triggered by the same raw-quad convergence test,
+  with the anchor **measured off the raw every frame** by
+  `clip_plateau.hpp`'s `ClipPlateauDetector` (a 1024-bin histogram of
+  converged quad-max; floor = the 1st-percentile bin's lower edge; anchor =
+  floor − 1.5%, the same margin the 12-bit fix's anchor was measured with). A
+  quad counts as converged only if it is bright (max ≥ 1/4 of full scale) AND
+  equal-code (min ≥ 0.9 × max) — a neutral or coloured subject under real
+  gains is neither, which is what makes the signature mean "clamp" rather
+  than "bright." `ccmpPreviewStage.cpp` runs this per frame: apply with the
+  *previous* frame's anchor, then measure this frame for the next one (one
+  frame of latency), resets the anchor to "off" whenever metadata
+  `AnalogueGain` changes (a stale anchor after a gain change would whiten
+  highlights that are no longer clipped), and skips auto-detection — logging
+  once — when `max(r_gain, b_gain) < 1.15`, because near-unity gains make an
+  ordinary neutral subject equal-code too. `sensorClipCode` still works as an
+  override in 16-bit, but there it means something stronger than in 12-bit:
+  non-zero switches auto-detection off entirely rather than just overriding a
+  table lookup.
+
+As a side effect of measuring the clamp per frame, 16-bit's stage also
+answers the open question the 12-bit fix left behind: whether
+`CcmpAnchor::clip_code` (2900 / 2582) still holds at gains other than the one
+it was measured at. The 12-bit path now runs the same detector in **shadow
+mode** — fed from `quadRgb()` via `setPlateauDetector()`, accumulated over
+the same 120-frame window as the periodic report and never adopted or allowed
+to change a rendered byte — and appends what it would measure to the
+existing log line.
+
+**Reading the 16-bit log line:** `clamp anchor N (auto|override|off), plateau
+floor F from C converged quads of S, peak raw code P, highest uncorrected U,
+D quads fully desaturated`. Same falsifier as 12-bit: `highest uncorrected`
+tracking the plateau floor instead of sitting under the ramp start means the
+anchor is too high. `converged quads` at 0 while a blown area is in frame
+means the convergence test itself is wrong for that footage — that is a
+finding, not a tuning knob. The 12-bit periodic line now reads `... (clip
+anchor N), auto floor N, would anchor M` — the appended pair is the shadow
+measurement, `clip anchor N` remains the table value actually in force.
 
 ## CineMate Log (`--log-encode`)
 
