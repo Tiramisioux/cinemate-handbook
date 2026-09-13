@@ -2031,3 +2031,45 @@ cover MJPEG stream caching but had nothing on page-level caching.
 
 **Confirmed by:** operator, session 2026-09-13 — "hard reload fixed it"; the curl output above,
 pasted live, showing the correct per-take `source` while the pane still said otherwise.
+
+## 2026-09-13 — a settings-editor save had silently deleted whole blocks from the camera's settings.jsonc
+
+**Tested:** the operator's camera, found while preparing a routine branch update. The Pi's
+`/home/pi/cinemate/settings.jsonc` was modified against its checkout, so before overwriting it I
+compared the two as data — parsed both, flattened to leaf paths, and diffed the values rather
+than the text.
+
+**Did not work — the live file was missing things nobody had removed on purpose:** 21 keys
+present in the repo file were **absent entirely** from the camera's, including the whole
+`system.https` block (4 keys) and the whole `system.web_api` block (5 keys, the wireless control
+API's on/off, token and rate limits). Of the 7 values that differed, none looked like an operator
+decision: both cameras' `tuning_file_override.path` blanked to `""`, `sensors.cam1.camera_name`
+blanked, `sensors.cam1.override_camera_name` flipped to false, `system.welcome.image` turned from
+`null` to `""`, and `input_peripherals.pots` emptied from its eight-entry table to `[]`. Every
+comment in the file was gone, and so was the `$schema` line.
+
+**Why:** the settings editor's save is a **replace, not a merge**. `buildState()` walks the
+page's `[data-path]` elements and `put_settings()` writes exactly that document, so a key the
+page has no field for is not preserved — it is dropped. This is the same mechanism the
+already-known comment loss comes from (a structural change forces a full rewrite), but the
+comment loss is the least of it: the keys go too. Nothing warns, and the camera keeps running
+normally afterwards, because `config_loader` falls back to built-in defaults for whatever is
+missing. That is what makes it invisible — the failure only shows up when a default differs from
+what the operator had set, possibly weeks later, or when someone reads the file.
+
+This also explains a pattern already in the template: several cards carry hidden `[data-path]`
+inputs whose only job is to keep their key alive through a save (`image_capture.thumbnail` and
+`thumbnail_size` are two). Those are a patch per key, applied wherever someone noticed. They are
+not a fix, and the absence of one is silent.
+
+**Worth keeping about the method:** the diff that found this was structural, not textual. A
+`git diff` on the file reported "242 insertions, 300 deletions" — which reads like a formatting
+churn and invites exactly the wrong conclusion. Parsing both sides and comparing leaf paths
+turned that into "21 keys missing, 7 values changed, and here they are." When a config file
+looks wholly rewritten, compare it as data before believing the line count.
+
+**Confirmed by:** operator's camera, 2026-09-13, during the thumbnail branch update; the live
+file was backed up to `~/settings.jsonc.before-thumbnail-update.bak` on the Pi before the repo
+copy replaced it, so the evidence survives. Documented for operators in
+`docs/settings-editor.md`'s save section. The real fix — merging into the file on disk instead of
+replacing it — is not written.
