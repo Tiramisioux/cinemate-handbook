@@ -1926,3 +1926,67 @@ restarting, because conflict markers in that file break the startup parse. Nothi
 
 **Confirmed by:** operator, session 2026-09-13 — Redis output pasted (`"2"` / `"2"`) and
 "file sizes seem to match the new settings". Branch heads from `git ls-remote`.
+
+## 2026-09-13 — Phase 2 gate: all four thumbnail modes confirmed on hardware, and the colour JPEG is 34× smaller than the uncompressed colour plane
+
+**Tested:** the operator's camera on `feature/dng-thumbnail-cost` (cinepi-raw `17453ce`,
+cinemate `318a0cf9`, rebuilt on the Pi — this phase links libjpeg into `cinepi_raw_dep`), imx585
+in 4K 16-bit ClearHDR (3840×2200, lores 1256×720, `thumbnail_size` 2 → 314×180). Four takes,
+one per mode, recorded back to back at 22:39–22:41 and pulled to the Mac. Verdicts from the
+files, never the log: `dng_ifd_dump.py` for the IFD chain, `exiftool -a -G1 -validate` as an
+independent reader, and Pillow to decode the JPEG strip and compare it pixel-wise against the
+uncompressed colour thumbnail of the same scene.
+
+**Worked — every mode wrote exactly what it claims, and the encoder's own figures hold:**
+
+| `thumbnail` | IFD1 | Strip | File | Over the raw strip |
+|---|---|---|---|---|
+| 0 off | none (1 IFD, next-IFD pointer 0) | — | 16,896,680 | +680 B |
+| 1 mono | 314×180, spp 1, photometric 1 | 56,520 | 16,953,338 | +0.3% |
+| 2 colour | 314×180, spp 3, photometric 2 | 169,560 | 17,066,388 | +1.0% |
+| 3 jpeg | 314×180, spp 3, photometric 6, **compression 7**, YCbCrSubSampling {2,2}, positioning 1 | 4,884–5,021 (mean 4,959 over 126 frames) | ~16,901,750 | **+0.03%** |
+
+- **The off position is a true no-op**, byte-for-byte what a pre-thumbnail build wrote: one IFD
+  and 680 bytes of overhead, the same figure the 2026-09-13 measurement entry recorded for 3.4-era
+  files with no thumbnail. `c0d01b4`'s design claim survives contact with hardware.
+- **The mode toggle works without hard-coding.** This is the experiment the 2026-09-05 entry left
+  open: `setup_encoder()` now reads `options_->thumbnail` and takes 0, 1, 2 and 3 in turn, on a
+  camera that was never restarted between takes. Whatever happened in September's session, the
+  ordering hazard `c9b2c5f` hypothesised does **not** reproduce on this build — the read is safe.
+- **The JPEG strip is a real JPEG**: starts `ffd8ffe0`, ends `ffd9`, decodes to 314×180 RGB in
+  Pillow. Against the uncompressed colour thumbnail of the same scene it is visually identical —
+  mean RGB 47.3/20.5/1.1 vs 47.4/20.5/0.8, luma 26.3 both, mean absolute difference under 3 codes
+  per channel (different frames of different takes, so that residual is scene motion plus quantisation,
+  not a colour error). No channel swap, no coefficient error, no range mistake.
+- **Size, the whole point:** 4,959 B mean against 169,560 B uncompressed, **34.2× smaller**, and
+  smaller than the *mono* plane by a factor of 11. Per pixel that is 0.088 B, comfortably under
+  the 0.15 B/px budget `sensor_detect.THUMBNAIL_JPEG_BUDGET_BYTES_PER_PIXEL` uses for the
+  minutes-remaining estimate — the estimate errs toward less card time, which is the only
+  direction it may err in. Per-frame size varies (4,884–5,021 across the take), as a compressed
+  thumbnail must; the fixed-size assumption holds only for the three uncompressed modes.
+- `exiftool -validate` returns **one** warning on every mode including off: `Wrong IFD for 0x9003
+  DateTimeOriginal (should be ExifIFD not IFD0)`. Pre-existing, unrelated to IFD1, present in
+  3.4-era files too — noted so a later reader does not attribute it to the thumbnail work.
+
+**Did not work:** nothing. No mode failed, no reader refused a file.
+
+**Not run, and still open:** the CPU comparison (step 7 of the gate — per-mode encode
+milliseconds at 4K 25 fps and at HD, with `dropped_frames`/`hw_write_failures` watched). The
+docs' "how to choose" paragraph and the settings-editor labels still describe relative CPU cost
+in words rather than measured numbers, and the JPEG mode's cost on a Pi at high frame rates is
+therefore **unknown**. Also not yet checked: whether a third-party DNG application (Resolve,
+Adobe DNG Converter) accepts photometric 6 + tags 530/531 in IFD1 — Pillow and exiftool do, but
+they are not the tools the footage goes to.
+
+**Why:** as designed. `dng_save()` branches on the per-take `thumb_mode_` snapshot; mode 3 feeds
+the same RGB rows the uncompressed colour path builds into libjpeg at quality 85 with 4:2:0
+sampling, and `add_thumbnail_ifd1_entries()` in `cinepi/dng_thumbnail.hpp` writes the compressed
+variant's tag set. The measured 0.088 B/px sits inside the 0.04–0.08 B/px range measured
+desk-side on three earlier takes (`development/dng-thumbnail-cost/FINDINGS.md` §2b), slightly
+above it because this scene is a dark, warm, grainy interior — the direction that range predicted
+would cost more.
+
+**Confirmed by:** operator, session 2026-09-13, takes `CINEPI_26-09-13_223925_F06_C00001_cam0`
+(off), `_223955_F01_` (mono), `_224030_F20_` (colour), `_224059_F22_` (jpeg). Builds
+cinepi-raw `17453ce`, cinemate `318a0cf9`. Points back to the two earlier 2026-09-13 entries for
+the cost baseline this extends, and to 2026-09-05 for the toggle question it settles.
