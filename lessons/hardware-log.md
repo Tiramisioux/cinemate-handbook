@@ -1819,3 +1819,73 @@ encoder to be examined; measurements reproduced on that file. cinepi-raw `c0d01b
 (`_calc_lores`, `compute_frame_size_mb`). Fix planned in
 `development/dng-thumbnail-cost/PLAN.md` (default shift 1 = 640×360, toggle restored, size
 model corrected); its hardware gate will be recorded as its own entry.
+
+## 2026-09-13 — 16-bit ClearHDR is NOT unaffected: the clamp cast is there too, it moves with gain, and ISO 2500 only escapes by accident
+
+**Tested:** imx585 colour, 16-bit ClearHDR 4K (`sensor_mode=6`, 3840×2200), `cinepi-raw`
+`main` @ `4aeda82` (contains `dev` @ `307d30e`, i.e. the 12-bit fix `f804ee1`), driver pin
+`cinemate-7modes`, `hdr_blend=5`, `hdr_gain_adder=1`, thresholds empty, shutter 96°, 25 fps,
+`cg_rb=1.8,1.7`. Two operator takes 13 minutes apart:
+`CINEPI_26-09-13_191155_F22_C00000_cam0` (Redis `iso=1200`, driver `ANALOG_GAIN=71`) and
+`CINEPI_26-09-13_192414_F07_C00000_cam0` (`iso=2500`, `ANALOG_GAIN=80`). Desk analysis of
+the DNGs and embedded thumbnails plus the Pi journal for 19:05–19:45; no code changed yet.
+
+**Worked:** the ISO 2500 take — blown sky neutral (thumbnail sky 250/253/250) in the
+preview and the thumbnail.
+
+**Did not work:** the ISO 1200 take — blown sky pink (251/226/251) in the HDMI preview, the
+MJPEG view and the thumbnail, DNG fine. The operator reported it as "ISO 1600 pink, 2500
+OK"; the journal says the pink take was 1200, and 1600 behaves like 1200 for the reason
+below, so both statements hold.
+
+**Why:**
+
+1. **The 2026-09-06/07 entry's "16-bit ClearHDR unaffected" was an observation at one
+   gain, not a property of the mode.** Both 16-bit frames carry the same equal-code clamp
+   plateau the 12-bit fix describes: all four CFA channels on the same codes (54069–54164 in
+   the first take, 48541–48643 in the second), quad min/max 0.99 on the plateau against 0.55
+   for a neutral subject below it, and nothing above the plateau but isolated single pixels.
+   `ccmpPreviewStage` gates itself off at 16-bit, so the lores is the ISP's own render: it
+   takes 65535 as white, WB multiplies R by 1.8 and B by 1.7 to clipping while G stays at
+   0.82 of range, and the pixel is pink. Same cast as 12-bit, no compander involved.
+2. **The clamp code is not a constant.** Same mode, blend, gain adder, shutter and frame
+   rate; analogue code 71 → plateau ≈ 54100 (0.826 of full scale), code 80 → ≈ 48600
+   (0.742). Higher gain, lower clamp. A per-binning constant like `CcmpAnchor::clip_code`
+   cannot serve 16-bit; the anchor has to be read off the frame. (Open question this raises:
+   the 12-bit anchors were measured at an unrecorded gain, and today's 12-bit journal shows
+   `peak raw code 4095` at codes 71 and 80 — whether 2900/2582 hold across gains has not been
+   checked. The fix branch logs a shadow measurement in 12-bit to answer it.)
+3. **ISO 2500 is neutral because of ISP digital gain, not because the sensor behaves.**
+   The driver caps analogue gain in ClearHDR at code 80 (`IMX585_ANA_GAIN_MAX_HDR`, ≈ 15.85×);
+   `cam_helper_imx585` maps ISO 1600 → code 80 and ISO 2500 → 93 → clamped to 80 (journal:
+   `iso = 2500` → `ANALOG_GAIN=80`; 1600/2500/3200 all write 80). libcamera's AGC then
+   makes up the difference as digital gain in the PiSP WBG block (`agc_channel.cpp`
+   `limitGain()`: "made up with additional digital gain applied by the ISP"; capped at 4×).
+   At 2500 that is 1.58×: the plateau at 0.742 becomes 1.17, all three channels clip, white.
+   At 1600 it is 1.01× and G stays at 0.75: pink. **Consequence: in ClearHDR every ISO above
+   ~1585 records the same exposure** — the DNG is the sensor at code 80 (the two takes' raw
+   mid-tones agree, G median 9775 vs 9567); only the preview and thumbnail brighten.
+4. **Not the cause, checked:** the lores includes the sensor's 20 prepended optical-black
+   rows (thumbnail rows 0–4 black, lores 1256×720 = the 2200-row aspect) — expected, and it
+   means the renderer's full-frame nearest mapping is the right one for 16-bit; tuning black
+   level 3200 matches the DNG; `post-processing0.json` has no `ccmpPreview` entry.
+
+**Method note:** the operator's memory of the ISO was one step off, and the two takes
+happened to bracket the analogue-gain cap. Without the driver's `ANALOG_GAIN=` journal
+lines — which it prints on every write — the "2500 is fine" observation would have pointed
+at the sensor instead of at libcamera's digital gain, and a fix anchored at "the 16-bit
+clamp code" would have been measured at one ISO and shipped wrong for the next. Read the
+journal for the actual control values before reasoning from the reported ones.
+
+**Fix:** designed, not built or tested — a feature branch handoff at
+`development/clearhdr16-preview-clamp/` (`PLAN.md`, `HANDOFF.md`, `evidence/`): keep the ISP
+render for 16-bit, detect the clamp per frame from equal-code bright quads, neutralise only
+that zone in place in the lores, log the measured anchor and `highest uncorrected`. Append
+the verdict here after the operator's test, against the predictions in `PLAN.md` §6.
+
+**Confirmed by:** the operator's takes and report of 2026-09-13; the Pi journal
+(`ANALOG_GAIN` lines, `Changed value: iso`, the 16-bit launch line at 19:23:58); DNG and
+thumbnail measurements reproduced by the scripts in `development/clearhdr16-preview-clamp/evidence/`.
+The mechanism in (3) is from source (`imx585.c`, `cam_helper_imx585.cpp`, `agc_channel.cpp`,
+`pisp.cpp`) plus the journal, not from a metadata `DigitalGain` readout — that readout is
+still worth one look on the rig.
