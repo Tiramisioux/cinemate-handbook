@@ -110,6 +110,19 @@ because the settings file said the feature was on and that reads like an answer.
 concluding a settings file is wrong, check whether a persisted override is outranking it; and
 before writing a key to fix something, check whether anything reads it after startup.
 
+`thumbnail_size` (the embedded DNG thumbnail's downscale) is the same shape, on the cinepi-raw
+side this time. cinemate seeds it once at boot, via `thumbnail_size_startup_value()` in
+`config_loader.py`, from `image_capture.thumbnail_size` in `settings.jsonc`; cinepi-raw's own
+handler for the key restarts the camera on any live write, because a mid-take reconfigure would
+invalidate the buffer size `setup_encoder()` already committed to for the take in progress. So
+`redis-cli set thumbnail_size 2` (published) *does* take effect — unlike the dynamic-resolution
+keys above, nothing here silently ignores the write — but it costs a camera restart, which is
+why the key has no CLI verb or settings-editor field: `settings.jsonc` is the only place to
+change it. Contrast `thumbnail` (0 off / 1 mono / 2 colour, validated by
+`thumbnail_startup_value()`), which is genuinely live: cinepi-raw's pub/sub handler applies it
+immediately, with no restart, though `setup_encoder()` still only reads it once per take — see
+[`cinepi-raw.md`](cinepi-raw.md#the-embedded-thumbnail-ifd1) for why.
+
 ## `awb` is a trap
 
 It looks like the white-balance control. It isn't reachable — cinemate drives colour through

@@ -59,6 +59,44 @@ cached mental model of its internals; read the current file if you're changing p
 or metadata behavior. See [`../working/testing.md`](../working/testing.md) for what part of
 this *is* unit-testable (the packing helpers) and what genuinely needs a live take.
 
+## The embedded thumbnail (IFD1)
+
+Every DNG can carry a second image alongside the raw frame: an uncompressed 8-bit thumbnail
+(mono or RGB) at the lores stream's own size, chained as a second IFD (IFD1) right after the
+raw frame's IFD0. IFD0 itself is untouched by this — same bytes, same offset, same next-IFD
+field left at 0 whenever the thumbnail is off or the lores stream is unavailable, which is what
+makes "off" a genuine no-op rather than a smaller version of "on".
+
+The geometry — width, height, samples per pixel, and the byte count that follows from them —
+lives in one place, `cinepi/dng_thumbnail.hpp`'s `thumbnail_geometry()`. `setup_encoder()` calls
+it to size the take's buffer reservation; `dng_save()` calls it again to get what it actually
+writes into IFD1, so the two cannot silently drift apart the way two separately-computed copies
+of the same formula once could. cinemate mirrors the same formula in Python,
+`sensor_detect.thumbnail_plane_bytes()`, for its own `file_size` / minutes-remaining estimate —
+see that function's docstring for the argument-order difference between the two.
+
+Two Redis keys govern it, with different lifetimes:
+
+- `thumbnail` (0 off, 1 mono, 2 colour) is a **per-take snapshot**: `setup_encoder()` reads
+  `options_->thumbnail` once, at the first frame of each take, and holds it for the whole take
+  even if the key changes mid-recording. This is deliberate, not an oversight — two encode
+  workers racing a live value mid-take could otherwise write one take with a non-monotonic mix
+  of thumbnail/no-thumbnail frames. A `set thumbnail` therefore always takes effect on the
+  *next* take, never the current one.
+- `thumbnail_size` (0–12, a right-shift of the lores plane) is **boot-seeded**: CineMate seeds
+  it from `image_capture.thumbnail_size` before cinepi-raw launches, and cinepi-raw's own
+  handler restarts the camera on any live change — a mid-take reconfigure would invalidate the
+  buffer `setup_encoder()` already sized against this take's snapshot.
+
+The shipped default is **mono at shift 1** — 640×360, 230,400 B per frame — an operator decision
+made 2026-09-13 for efficiency, at the cost of a greyscale Playback pane and take strip. Colour
+(`set thumbnail 2`, or `image_capture.thumbnail: 2`) is the opt-in, at three times the bytes.
+Shift 0 (the full lores plane, no downscale) in colour was measured at up to +89% per file,
+which is what CineMate 3.4 actually shipped with until this was fixed. See the 2026-09-13
+hardware-log entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for the
+measurements this default is built on, and the entry immediately above it (2026-09-05) for why
+the mode toggle had stopped reading `options_->thumbnail` at all in the meantime.
+
 ## ClearHDR: sensor HDR, live knobs, and the CCMP12 decompand
 
 `--hdr off|auto|sensor|single-exp` (`cinepi_options.cpp`) selects sensor HDR
