@@ -1899,11 +1899,14 @@ against the prediction in `development/dng-thumbnail-cost/PLAN.md` §5 (raw stri
 + about a kilobyte of IFDs).
 
 **Worked:** Redis read `2` / `2` — the seeds from `image_capture.thumbnail` and
-`thumbnail_size` land as designed. The operator reports the file sizes match the new default.
-The dump-tool output was not pasted into the session, so the IFD1 geometry itself (320×180,
-three samples per pixel, strip 172,800 B) is inferred from the size match, not read from the
-tags; the earlier 2026-09-13 entry above has the tag-level measurements of the 3.4 files this
-replaces.
+`thumbnail_size` land as designed. Take A read at the tag level (the operator's
+`CINEPI_26-09-13_211352_F14_C00000_cam0`, 4K 10-bit CineMate Log, walked with
+`dng_ifd_dump.py` and cross-checked with `exiftool -a -G1`): IFD1 `320x180`, `8 8 8`, three
+samples per pixel, RGB, uncompressed, strip `172,800` B; file `10,543,688` B = raw strip
+`10,368,000` + thumbnail `172,800` + `2,888` B of IFDs and the 2 KB log table, identical on
+all 43 frames. The same mode on the 3.4 build (the 09-06 take in the earlier 2026-09-13
+entry above) was `13,135,688` B per frame, so this take is **2,592,000 B smaller per frame,
+19.7%**, exactly the 1280×720 → 320×180 colour difference.
 
 **Did not work:** nothing observed. Not yet run, and still on the gate list: take B
 (`set thumbnail 0`, the experiment the 2026-09-05 thumbnail entry left open — does the toggle
