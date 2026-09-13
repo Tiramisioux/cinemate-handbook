@@ -1889,3 +1889,37 @@ thumbnail measurements reproduced by the scripts in `development/clearhdr16-prev
 The mechanism in (3) is from source (`imx585.c`, `cam_helper_imx585.cpp`, `agc_channel.cpp`,
 `pisp.cpp`) plus the journal, not from a metadata `DigitalGain` readout — that readout is
 still worth one look on the rig.
+
+## 2026-09-13 — thumbnail default colour 320×180 confirmed on the camera: Redis seeds and file sizes match
+
+**Tested:** the operator's camera on `feature/dng-thumbnail-cost` (cinepi-raw `409da23`,
+cinemate `7634dd51`), deployed the same evening the branch was pushed. Checked after boot:
+`redis-cli get thumbnail` / `thumbnail_size`, then the per-frame file sizes of a fresh take
+against the prediction in `development/dng-thumbnail-cost/PLAN.md` §5 (raw strip + 172,800 B
++ about a kilobyte of IFDs).
+
+**Worked:** Redis read `2` / `2` — the seeds from `image_capture.thumbnail` and
+`thumbnail_size` land as designed. The operator reports the file sizes match the new default.
+The dump-tool output was not pasted into the session, so the IFD1 geometry itself (320×180,
+three samples per pixel, strip 172,800 B) is inferred from the size match, not read from the
+tags; the earlier 2026-09-13 entry above has the tag-level measurements of the 3.4 files this
+replaces.
+
+**Did not work:** nothing observed. Not yet run, and still on the gate list: take B
+(`set thumbnail 0`, the experiment the 2026-09-05 thumbnail entry left open — does the toggle
+read from `options_->thumbnail` hold without hard-coding?), take C (`thumbnail_size 0` →
+1280×720, the size plumbing end to end), and the `file_size`-vs-measured check for the
+minutes-remaining figure.
+
+**Why:** as designed — `main.py` seeds both keys from the settings file (defaults 2/2 in
+`config_loader.py`), `setup_encoder()` snapshots them at each take's first frame, and
+`dng_save()` writes the colour plane at lores >> 2. One deployment fact worth keeping: the live
+`settings.jsonc` is a *tracked* file, so switching to a branch that changes it aborts with
+"Your local changes … would be overwritten". Stash the live file (`git stash push --
+settings.jsonc`), switch, then `git stash pop` for a three-way merge that keeps the operator's
+values and takes the branch's new block — and `grep -c '^<<<<<<<' settings.jsonc` before
+restarting, because conflict markers in that file break the startup parse. Nothing in
+`cinemate-update.sh` handles this today.
+
+**Confirmed by:** operator, session 2026-09-13 — Redis output pasted (`"2"` / `"2"`) and
+"file sizes seem to match the new settings". Branch heads from `git ls-remote`.
