@@ -88,11 +88,14 @@ Two Redis keys govern it, with different lifetimes:
   handler restarts the camera on any live change — a mid-take reconfigure would invalidate the
   buffer `setup_encoder()` already sized against this take's snapshot.
 
-The shipped default is **colour at shift 2** — 320×180, 172,800 B per frame — the operator's
-final 2026-09-13 decision, superseding an interim session default of mono at shift 1
-(640×360, 230,400 B): at quarter size, colour costs *fewer* bytes than mono did at half size,
-so there is no longer a size/colour trade-off to make. Mono (`set thumbnail 1`, or
-`image_capture.thumbnail: 1`) is the lighter opt-in, at a third of the bytes. Shift 0 (the full
+The shipped default is **colour at shift 1** — 640×360, 691,200 B per frame, +5.6% on a 4K
+12-bit frame and +4.0% on 4K 16-bit ClearHDR. That figure moved twice on 2026-09-13 before it
+settled, and the reasoning is worth keeping because the two sizes are not equivalent in kind: an
+interim quarter-size default (320×180, 172,800 B) made colour cost *fewer* bytes than mono at
+half size, which flattened the choice into a free one; half size restores a real trade-off, with
+colour costing three times mono at the same size. Half won on what the thumbnail is actually
+for — 320×180 is small for judging a take in the Playback pane, which is the pane's only path to
+a picture. Mono (`set thumbnail mono`) is the lighter opt-in at a third of the bytes. Shift 0 (the full
 lores plane, no downscale) in colour was measured at up to +89% per file, which is what
 CineMate 3.4 actually shipped with until this was fixed. See the 2026-09-13 hardware-log entry
 in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for the measurements this default
@@ -128,7 +131,7 @@ share a source measurement, and conflating them would either waste buffer headro
 take or under-count `file_size` on every one that uses JPEG.
 
 Colour JPEG is the smallest file of the four by a wide margin — measured 9–16 KB per frame at
-640×360, ~3–8 KB at the shipped 320×180 default, against 230,400 B / 57,600 B for mono at the
+the shipped 640×360 default, ~3–8 KB at 320×180, against 230,400 B / 57,600 B for mono at the
 same sizes (FINDINGS.md §2b, `development/dng-thumbnail-cost/`) — but the highest CPU per
 frame: the same YUV→RGB conversion colour already pays, plus the JPEG encode itself. That is
 why it stays an opt-in (`set thumbnail jpeg`, or `image_capture.thumbnail: "jpeg"`) rather than
