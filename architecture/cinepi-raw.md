@@ -88,13 +88,15 @@ Two Redis keys govern it, with different lifetimes:
   handler restarts the camera on any live change — a mid-take reconfigure would invalidate the
   buffer `setup_encoder()` already sized against this take's snapshot.
 
-The shipped default is **mono at shift 1** — 640×360, 230,400 B per frame — an operator decision
-made 2026-09-13 for efficiency, at the cost of a greyscale Playback pane and take strip. Colour
-(`set thumbnail 2`, or `image_capture.thumbnail: 2`) is the opt-in, at three times the bytes.
-Shift 0 (the full lores plane, no downscale) in colour was measured at up to +89% per file,
-which is what CineMate 3.4 actually shipped with until this was fixed. See the 2026-09-13
-hardware-log entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for the
-measurements this default is built on, and the entry immediately above it (2026-09-05) for why
+The shipped default is **colour at shift 2** — 320×180, 172,800 B per frame — the operator's
+final 2026-09-13 decision, superseding an interim session default of mono at shift 1
+(640×360, 230,400 B): at quarter size, colour costs *fewer* bytes than mono did at half size,
+so there is no longer a size/colour trade-off to make. Mono (`set thumbnail 1`, or
+`image_capture.thumbnail: 1`) is the lighter opt-in, at a third of the bytes. Shift 0 (the full
+lores plane, no downscale) in colour was measured at up to +89% per file, which is what
+CineMate 3.4 actually shipped with until this was fixed. See the 2026-09-13 hardware-log entry
+in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for the measurements this default
+is built on, and the entry immediately above it (2026-09-05) for why
 the mode toggle had stopped reading `options_->thumbnail` at all in the meantime.
 
 ## ClearHDR: sensor HDR, live knobs, and the CCMP12 decompand
