@@ -28,7 +28,17 @@ Seven checks, each aimed at a specific place this codebase has drifted before:
 - **`findings_disposition_check.py`** — every row in `system-review/FINDINGS.md` carries one
   of five dispositions (`fixed`/`guarded`/`accepted`/`superseded`/`strength`). B10.1 gave all
   228 findings a disposition; this is what stops a new one being appended without one, or with
-  a typo'd value.
+  a typo'd value. Since 54cae555 the archive is not in `dev`'s tree, so on `dev` this **skips**
+  — narrowly: a `system-review/` that exists without `FINDINGS.md` still fails, as does a parse
+  matching fewer than 228 rows. The floor is the "must fail, not pass" rule below, and
+  was added at the same time as the skip: the gate had never had one, so a row pattern that
+  stopped matching would have printed "0 findings, all dispositioned" and passed forever.
+
+  Worth knowing why the skip was not simply left broken: for over a week after 54cae555 this
+  check raised `FileNotFoundError` on every push to `dev`, and because job steps run in
+  sequence with no `continue-on-error`, that traceback also skipped **every check listed below
+  it here**. Six checks were dark behind one red X that looked like one check. When a drift job
+  fails, read which step failed before assuming the rest of the job ran.
 - **`design_token_diff.py --strict`** — the HDMI GUI's colour constants and the web
   template's CSS custom properties haven't diverged. Gated at zero; nothing has drifted yet.
 - **`gui_field_extract.py --max-unresolved 0`** — every action the settings editor (and the

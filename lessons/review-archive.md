@@ -1,9 +1,14 @@
 # Review archive — a map, not a copy
 
-This page tells you where to look in `system-review/` (inside the `cinemate` repo, on `dev`)
-when a handbook page's citation isn't enough. It doesn't restate the findings — that's the
-one thing this handbook is built specifically not to do (see the handbook
-[`README.md`](../README.md)).
+This page tells you where to look in `system-review/` (inside the `cinemate` repo, on
+`feature/dev-track`) when a handbook page's citation isn't enough. It doesn't restate the
+findings — that's the one thing this handbook is built specifically not to do (see the
+handbook [`README.md`](../README.md)).
+
+54cae555 moved the archive off `dev`, where it had been a planning ledger and analysis
+workspace checked in alongside product code. If a path on this page doesn't resolve in your
+checkout, that is why: these files are on `feature/dev-track`, not on the branch you are
+most likely standing on.
 
 `system-review/` is a **dated archive with evidence**: an eleven-session audit (228 findings)
 plus the remediation and hardware verification that followed. The findings total grew past
