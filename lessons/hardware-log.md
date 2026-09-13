@@ -1756,3 +1756,66 @@ assistant on the rig after `sudo make install`: three consecutive restarts issue
 all survive with `getty=inactive` and no getty between `Started` and `Stopped`; a plain
 `systemctl stop` still returns the console. Local gates green (1103 tests, docs drift, installer
 parse). Not yet re-confirmed by the operator from the settings-editor button itself.
+
+## 2026-09-13 — the embedded DNG thumbnail costs 2.7 MB on every frame; measured on files, and the toggle that would turn it off is dead
+
+**Tested:** desk-side, on DNGs the operator's camera wrote (imx585, cinepi-raw `dev` after
+`c9b2c5f` — the same tree `main` `4aeda82` and the 3.4 installer ship). Prompted by the
+operator: DNGs grew between CineMate 3.3.1 and 3.4. The operator supplied one take as the
+example (`CINEPI_26-09-13_192414_F07_C00000_cam0`, 4K 16-bit ClearHDR); three post-change takes
+from 2–6 September in `~/Downloads` and seven pre-change takes from 27–29 August under
+`development/pi-test-takes/` served as the comparison. Every file's IFD chain was walked with an
+independent TIFF parser (`development/dng-thumbnail-cost/dng_ifd_dump.py`, no code shared with
+`dng_preview.py`) and cross-checked with `exiftool -a -G1`. Full analysis:
+`development/dng-thumbnail-cost/FINDINGS.md`; fix plan and worker brief beside it.
+
+**Worked:** the two readers agree on every file, and the arithmetic closes: file size = raw
+strip + thumbnail strip + a few hundred bytes of IFD, on all 47 frames of the example take.
+The 2026-09-05 thumbnail entry above left the cost "unmeasured, and named rather than
+dropped"; this is that measurement.
+
+| Take | Mode | Raw strip | IFD1 strip | File | Δ |
+|---|---|---|---|---|---|
+| 08-27 pi-test-takes 223326 | HD 12-bit SDR | 3,110,400 | — | 3,111,080 | pre-change |
+| 09-02 Downloads 203804 | HD 10-bit log | 2,592,000 | 2,764,800 (1280×720 RGB) | 5,359,688 | **+106.7%** |
+| 08-27 pi-test-takes 222857 | 4K 10-bit log | 10,368,000 | — | 10,370,740 | pre-change |
+| 09-06 Downloads 210738 | 4K 10-bit log | 10,368,000 | 2,764,800 | 13,135,688 | **+26.7%** |
+| 08-29 pi-test-takes 224016 | 4K 16-bit ClearHDR | 16,896,000 | — | 16,896,680 | pre-change |
+| 09-13 operator example 192414 | 4K 16-bit ClearHDR | 16,896,000 | 2,712,960 (1256×720 RGB) | 19,609,788 | **+16.1%** |
+
+For the SDR modes a 3.3.1 user would compare, the same formula gives 4K 12-bit +22% (11.87 →
+14.50 MiB per frame) and HD 12-bit **+89%** (2.97 → 5.60 MiB). The 3.3.1-era encoder
+(`7a6fde5`) wrote no thumbnail at all — its `setup_encoder()` logged `embedded lores thumbnail
+disabled` unconditionally — so the whole delta between the releases is this one strip.
+
+**Did not work:**
+
+- `thumbnail = 0` does nothing. `c9b2c5f` hard-codes `thumb_mode_ = 2` in `setup_encoder()`;
+  `settings.jsonc`, `set thumbnail`, the settings-editor action and `docs/redis-keys.md` all
+  still present it as a live control.
+- `thumbnail_size` is the only knob that works and nothing owns it: cinemate reseeds it to 0
+  every boot, no setting governs it, no CLI verb or editor field exposes it.
+- cinemate's `compute_frame_size_mb()` (`src/module/sensor_detect.py`) models raw strip
+  + 1 KB, so `file_size` in Redis and the GUI's minutes-remaining are low by the same 22–89%.
+- `cinepi_controller.cpp`'s `sync()` comment still calls this "the +7-22% write-cost
+  feature"; that range was computed for a smaller plan, before colour at shift 0 shipped.
+
+**Why:** the mechanism is fully established from source and files, no hardware needed.
+`dng_save()` writes the lores plane as a chained IFD1, uncompressed 8-bit RGB, at
+`(lores_w >> thumbnail_size) × (lores_h >> thumbnail_size) × 3` bytes. cinemate's
+`_calc_lores()` fixes the lores height at 720 and derives the width from the sensor aspect
+(1280 for 16:9, 1256 for the 3840×2200 ClearHDR modes), and `thumbnail_size` is 0 on every
+boot, so every frame carries the full plane. Nothing else that changed in the encoder between
+the two releases moves the size by more than 8 KB (the CCMP `LinearizationTable`), except
+CineMate Log, which is opt-in and shrinks frames. What remains **unknown**: the
+write-bandwidth effect on a long take (+22–89% per frame lands on the same path
+`hw_write_failures` guards), and whether reading `options_->thumbnail` in `setup_encoder()`
+has any ordering hazard — the 09-05 entry's open experiment, which the fix's gate runs.
+
+**Confirmed by:** operator, session 2026-09-13 — supplied the example take and asked for the
+encoder to be examined; measurements reproduced on that file. cinepi-raw `c0d01b4`
+(IFD1 introduced), `f57cc87` (colour default), `c9b2c5f` (mode hard-coded), `7a6fde5` (the
+3.3.1-era tree); cinemate `main.py` (`thumbnail_size` seeded 0), `sensor_detect.py`
+(`_calc_lores`, `compute_frame_size_mb`). Fix planned in
+`development/dng-thumbnail-cost/PLAN.md` (default shift 1 = 640×360, toggle restored, size
+model corrected); its hardware gate will be recorded as its own entry.
