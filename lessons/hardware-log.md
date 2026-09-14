@@ -2152,3 +2152,511 @@ now ok in 16 bit modes", then "pink is gone in both 12 bit modes", then the boun
 plus a live MJPEG frame pulled from the rig at 03:10 showing a neutral core with a ragged
 edge, against `auto floor 2952, would anchor 2908, clip anchor 2900` in the same moment. The
 ratio table is measured from the three DNGs with rawpy, per region.
+
+## 2026-09-14 — the ClearHDR preview stage, measured at last: 31ms, and the edge fix the synthetic model ranked wrong
+
+**Tested:** imx585 colour, all four ClearHDR modes, `cinepi-raw`
+`feature/clearhdr12-preview-clean` (`2f9ac51` → `28d5682` → `b725144`, i.e. phase 1's
+re-landed fix plus phase 2 cost work and phase 3's matte), cinemate `dev`, ISO 3200
+(analogue gain code 80), `cg_rb=1.8,1.7`, 25 fps, `hdr_blend=5`, `hdr_gain_adder=1`.
+Subject: a tungsten lamp with a yellow shade. Takes at 96° and 180° shutter; reference set
+kept at `~/Downloads/clearhdr12-preview-clean-refs/`.
+
+**Worked:**
+
+1. **The stage's cost is now a number on the log line**, per frame, beside the frame period
+   taken from consecutive `SensorTimestamp`s. Measured, on the same scene at 180°:
+
+   | mode | path | median | max |
+   |---|---|---|---|
+   | 12-bit 4K | full re-render | 35.2ms | 45.1ms |
+   | 12-bit HD | full re-render | 32.9ms | 34.0ms |
+   | 16-bit 4K | in-place | 21.9ms | 27.7ms |
+   | 16-bit HD | in-place | 18.8ms | 23.5ms |
+
+   Against a 15ms budget and a 40ms frame period: **every frame of every window is over
+   budget in all four modes**, and 12-bit 4K's maximum exceeds the frame period outright.
+   Nobody had ever measured this; the reverted branch was reverted on a dropped-frame count
+   with no idea which part cost what. The in-place path is ~40% cheaper than the full
+   re-render on identical content, which is the first direct evidence for phase 4 option A.
+
+2. **The ragged 12-bit boundary is fixed**, and visibly so — the confetti of isolated white
+   quads scattered into the yellow, and the yellow holes punched into the white, are both
+   gone; the boundary reads as an edge. Core still fully white, shade still fully yellow.
+
+3. **The preview-only invariant holds, measured rather than asserted.** Same frame, blown
+   core: recorded DNG developed in rawpy reads RGB (255, 166, 255) — pink; the embedded
+   thumbnail reads (254, 254, 254) — neutral. The yellow shade reads (225, 145, 0) against
+   (227, 153, 1), i.e. untouched in both.
+
+**Did not work:**
+
+- **The task brief's prescribed matte.** It specifies replacing the per-block minimum with a
+  mean and blurring that. On synthetic data that ranks best (0 holes / 0 islands against
+  min+blur's 81/16) — which is where the prescription came from. On the real takes the
+  ranking **inverts**:
+
+  | 12-bit HD, frame 40 | holes | islands | surround desaturated |
+  |---|---|---|---|
+  | shipped: 2x2 min | 143 | 59 | 0.0% |
+  | 2x2 mean + 3x3 box | 8 | 1 | **25.7%** |
+  | 2x2 min + 3x3 box | 3 | 1 | **4.6%** |
+  | ratio_lo-0.02, mean + box | 3 | 1 | **67.9%** |
+
+  The mean lets one fired quad drag a block the erosion would have rejected — the exact
+  property "one pixel is never a clamp" exists to deny — and the blur then spreads it. Keeping
+  the erosion and adding the blur gets the same or better artefact counts for a sixth of the
+  collateral damage. Widening the ratio ramp is worse again and buys nothing.
+
+- **The exact two-pass matte, in 12-bit.** Measured +1.0ms in 16-bit (its second pass touches
+  no raw) and **+14.9ms in 12-bit** (32.9 → 47.8ms), because its pre-pass re-reads the raw and
+  re-runs the decompand — putting the stage above the 40ms frame period. Replaced in 12-bit by
+  applying the previous frame's blurred matte, which costs **+1.7ms** (32.9 → 34.6ms) because
+  the trigger was already being computed in that pass. 16-bit keeps the exact, latency-free
+  version.
+
+- **A 96° take in 12-bit HD proves nothing.** Its highlight peaked at raw code 2120 against a
+  clip anchor of 2344 — it never reached the merge clamp, the correction never fired, and the
+  clean white core in that take is the ISP's own render. ISO cannot fix this: above ~ISO 1585
+  every step maps to gain code 80, so it brightens only the preview. 180° took the peak to
+  2441 and it clamped. **Check `peak raw code` against `clip anchor` before trusting a
+  ClearHDR take as evidence.**
+
+**Why the binned mode's edge is the worst one — an open hypothesis, now measured.** The
+2026-09-14 entry above guessed that coarse companding makes exact channel ties common in HD.
+Half right: the binned mode's yellow surround sits at 2nd/max p95 **0.978** against 4K's
+**0.966**, so binning does push a real yellow closer to the trigger — but the transition
+band's top two channels are on the identical code in **0.0%** of quads (median separation
+208-216 codes in 4K, 160 in HD). They are near-equal, never tied, so a tolerance in code space
+cannot separate them and feathering is the only tool that works. This was the question the
+brief said to answer before building anything, and it came out as predicted.
+
+**The reference takes this was all built on no longer exist.** All three named in
+`development/clearhdr12-preview-edge/HANDOFF-RESEARCH.md` are gone from `~/Downloads` *and*
+from `/media/RAW` (3% used — that drive was cleared). The consequence is concrete: the brief's
+own validation gate for `edge_probe.py` — reproduce isolated-pixel counts of 245 and 498 on the
+two 16-bit takes — **can never be run**, so the probe's absolute numbers are probable rather
+than confirmed. Its Q3 rankings are confirmed, because the synthetic self-check reproduces the
+documented 321/88 → 0/0 exactly. Independent corroboration did turn up: the brief records the
+orange surround at 0.912, and these takes measure 0.9129 / 0.9136 / 0.9132 across three frames
+of a different take eight days later. **Keep reference takes in `~/Downloads/<feature>-refs/`;
+`/media/RAW` is not an archive.**
+
+**Confirmed by:** measurements taken by the agent driving the Pi directly through
+`cinemate_dev.py` on 2026-09-14 22:00-22:15 — the timing figures are from the stage's own
+periodic log line, the ratio/hole/island figures from `edge_probe.py` over the recorded DNGs,
+and the pink-vs-neutral figures from rawpy renders against the embedded thumbnails. Operator
+confirmation of the *picture* is still outstanding: the before/after above is the agent's read
+of the thumbnails, not yet the operator's read of the live HDMI preview.
+
+## 2026-09-14 — where the 12-bit ClearHDR stage's 33ms actually goes: the render, not the correction
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD (`set resolution 3`), shutter 180° so the
+highlight actually clamps (peak raw code ~2438 against clip anchor 2344), ISO 3200, 25 fps,
+`cinepi-raw` `feature/clearhdr12-preview-clean` @ `b725144`. Four configurations, each a
+`ccmpPreview` entry in `/home/pi/post-processing0.json` and a session restart — **no rebuild
+between any of them**. Median read off the stage's own periodic timing line.
+
+**Worked — the decomposition, and the timer's own falsifiability check:**
+
+| config | median | delta | isolates |
+|---|---|---|---|
+| A — everything on, feathered | 34.7ms | — | as shipped |
+| B — `clipFeather 0` | 33.1ms | −1.6ms | the feathered matte |
+| C — B + `clipConvergence 0` | 26.4ms | −6.7ms | the convergence ratio rule |
+| D — C + `highlightRolloff 0` | **24.5ms** | −1.9ms | the anchor ramp |
+
+D also reports **`0 quads fully desaturated`** against A's 38.8M, so the correction really is
+inert there and the residual really is the bare render. **The whole correction — matte,
+convergence rule and anchor together — is 10.2ms. The render underneath it is 24.5ms, 71% of
+the stage.**
+
+This is also the check phase 2 required and had not yet had: the timing number moves by a
+sensible, predicted amount as each piece is switched off, and the desaturation counter falls
+to zero alongside it. A diagnostic that could not come out wrong was what shipped three bad
+anchors; this one can, and did.
+
+**Did not work — the task brief's phase 4 preference ordering.** It ranks option A first ("use
+the in-place correction on 12-bit instead of the full-frame render for the highlight defect...
+This removes the render from the highlight path entirely"), on the reasoning that the blown
+highlight is the same mechanism in both depths and the cheap 16-bit correction should serve it.
+The mechanism claim holds. The **cost** conclusion does not: the render is not there for the
+highlight, it is there for the **compander** — the mid-tone crush that only a re-render from
+raw can fix — so removing the highlight correction from it leaves the 24.5ms untouched. Option
+A saves some part of 10.2ms and lands near 28ms, still nearly 2x the 15ms budget.
+
+What the numbers actually point at:
+
+- **Option B (threading the render across row halves)** is the only one that attacks the
+  24.5ms. Split ideally it lands the stage near 17ms.
+- **Option C (a ClearHDR-only tuning file carrying black level 2455/3016)** removes the need
+  for the CPU render above the compander's second knee at no per-frame cost at all — but does
+  nothing below that knee and lifts the preview's black by 745 counts.
+- **No single option gets 12-bit under 15ms.**
+
+**Context worth keeping:** the frame period stayed locked at 40000us in *every* configuration,
+including the 34.7ms one and including the 47.8ms pre-pass version measured earlier the same
+night. The 15ms figure is a design budget, not a cliff — 25fps leaves 40ms, and the
+post-processor runs a detached thread per request, so the stage exceeding 15ms does not by
+itself drop a frame. What it eats is headroom the recorder needs under load, which is what the
+original 102-drops-in-20-minutes report was about and what a short take does not reproduce.
+
+**Confirmed by:** the agent driving the Pi through `cinemate_dev.py` on 2026-09-14 22:19-22:23;
+each configuration was a JSON edit plus a session restart, and `/home/pi/post-processing0.json`
+was restored to its original two-stage contents afterwards.
+
+## 2026-09-14 — "still speckles": the operator's eyes beat the agent's evidence, because the evidence was half-resolution
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD, tungsten lamp clamping (peak raw code 2442
+against clip anchor 2344), `cinepi-raw` `feature/clearhdr12-preview-clean` @ `b725144` then
+`5f4477c`. Frames pulled live from the MJPEG stream on port 8000 at the preview's own
+1280x720, with `clipFeather` as a runtime A/B (no rebuild).
+
+**Did not work — the agent's claim that the ragged boundary was fixed.** It was made off the
+embedded DNG thumbnail, which is **640x360 against the lores plane's 1280x720**. One matte
+block is 2x2 lores pixels, so the thumbnail's 2x downscale averages away exactly the
+granularity the fix is about. The operator looked at the live preview and said "still
+speckles", and was right.
+
+**What was actually true, measured at full resolution:**
+
+| | isolated whitened px | boundary roughness |
+|---|---|---|
+| feathering off | 172 | 2.77 |
+| 3x3 matte | 5 | 1.41 |
+| 7x7 matte | 2 | **1.07** |
+
+(roughness = boundary perimeter over that of a circle of equal area; 1.00 is smooth.)
+
+So the 3x3 matte did precisely what it was designed to do — **a 97% cut in isolated whitened
+pixels** — and that was not the complaint. The complaint was the SERRATION of the boundary
+itself, whose teeth are many blocks wide and which a 3x3 kernel cannot reach. Two different
+defects with one name.
+
+**The fix, and a hypothesis killed on the way:** widening the box to 7x7 takes roughness to
+1.07 for 1.11% of the far yellow desaturated, and costs +1.0ms because the blur is now a
+separable running-sum box, O(1) per block whatever the radius. The obvious alternative —
+raise `ratio_lo` so the yellow is excluded — was measured first and is **strictly worse**:
+roughness moves the wrong way (1.26 -> 1.34 at 0.99, 6.09 at 0.995). Raising the threshold
+does not make the decision less noisy, it only moves where the noise sits. The offline sweep
+predicted 1.04 at radius 3 and the live preview measured 1.07.
+
+**The lesson, which is about evidence and not about blur kernels: check that your instrument
+resolves the thing you are claiming about.** This project's standing rule is that a diagnostic
+which cannot come out wrong is not evidence. The thumbnail could come out wrong — it just
+could not come out wrong *at the scale that mattered*, which is the same failure wearing a
+different hat, and it is the fourth time in this investigation that a number or an image
+agreed with a wrong conclusion. **Pull preview frames from port 8000 at full resolution when
+judging preview quality; the DNG thumbnail is half-res and will flatter you.**
+
+**Confirmed by:** the operator's report against the live HDMI/MJPEG preview on 2026-09-14
+~22:26, then the agent's full-resolution A/B at 22:28-22:35. Still outstanding: the operator's
+own look at the 7x7 result.
+
+## 2026-09-14 — the merge ceiling is hard at ~0.55 of the container, and no exposed control moves it
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD (`set resolution 3`) and 16-bit ClearHDR HD
+(mode 5), tungsten lamp, shutter 180° so the merge clamps, `cinepi-raw`
+`feature/clearhdr12-preview-clean` @ `5f4477c`. Every ClearHDR control the CLI exposes, swept
+live while watching `auto floor` / `peak raw code` on the stage's own log line.
+
+**Did not work — every control that was supposed to move the ceiling:**
+
+| swept | values | plateau (12-bit HD) |
+|---|---|---|
+| analogue gain (via ISO) | code 80, 71, 60 | 35968 in 16-bit, **unchanged at every gain** |
+| `hdr_gain_adder` | 0 | 1452 |
+| `hdr_gain_adder` | **1, 2, 3** | **2412, 2412, 2412 — saturated** |
+| `hdr_threshold_low` | 4095, 3000, 2000, 1000 | 2412 at every value |
+| `hdr_threshold_high` | 0, 1000, 2500, 4095 | 2412 at every value |
+
+So the gain adder moves the ceiling once, from 1452 to 2412 between adder 0 and 1, and then
+stops. Nothing else moves it at all. **The merge output in the binned mode is pinned at raw
+code 2412 of 4095 — 0.589 of the container — and ~41% of the range is unreachable.**
+
+**Two modes agree, through different encodings.** Decompanding 12-bit code 2412 through the
+project's own curve (knees 500/11500, slopes 1/64 and 1/16, pedestal 200) gives linear ≈36,140.
+The 16-bit binned mode measures its plateau directly at **35,968**. Those are the same physical
+ceiling to within 0.5%, seen once through the compander and once without it. Full res sits
+higher: 16-bit 4K plateaus at 47,808-49,245, i.e. ~0.73-0.75, a ratio to the binned ceiling of
+about 4/3.
+
+**This contradicts the model the whole clamp investigation rests on.** The 2026-09-13 and
+2026-09-14 entries state the clamp "moves with analogue gain" on the strength of two full-res
+4K takes (54100 at code 71, 48600 at code 80), and `clip_plateau.hpp` exists to measure it per
+frame for exactly that reason. In the **binned** modes it does not move with gain at all —
+three gain codes, one plateau, to the last digit. Either full res and binned differ in kind, or
+something other than analogue gain differed between those two 4K takes. **The measurement that
+settles it is a gain sweep at full res**, which this session did not run.
+
+**Why this matters more than the preview work.** The stage can only choose what colour to paint
+a plateau; it cannot put roll-off into a signal that has none. Everything the ClearHDR preview
+work has done — neutralising the cast, eroding speckle, feathering the boundary — is cosmetics
+over a sensor-side limit: the merge stops at 55-59% of the container in the binned modes, so
+every highlight above that light level lands on the same flat code and renders as a
+featureless blob however it is coloured. The operator's judgement, on seeing a correctly
+feathered result, was "it looks feathered but this is not fixing the root cause", and the
+numbers above say they are right.
+
+This also puts a number on the recipe's #1 open vendor question ("what sets the ceiling"): not
+analogue gain, not the thresholds, and only the first step of the gain adder. The remaining
+candidates are the ClearHDR-only registers no public driver names, and the LG read's own
+saturation times a fixed alignment factor.
+
+**Confirmed by:** live sweeps through `cinemate_dev.py` on 2026-09-14 22:40-22:55, each value
+given ~11s to settle and read off two consecutive periodic log lines; `ANALOG_GAIN=80/71/60`
+confirmed in the journal, so the gain writes did reach the sensor rather than being silently
+dropped. All settings restored afterwards (blend 5, adder 1, thresholds unset, ISO 3200,
+shutter 96°, mode 3).
+
+## 2026-09-14 — SDR "looks nice" and ClearHDR does not: the preview correction was cosmetics, and was removed
+
+**Tested:** the same tungsten lamp, same rig, switched between 12-bit HD **ClearHDR** (mode 3)
+and 12-bit HD **non-ClearHDR** (mode 1) — same sensor, same size, same shutter and ISO, the
+merge the only difference. Operator watching the live preview.
+
+**Worked:** the non-ClearHDR mode. Operator's words, unprompted: **"now it looks nice!"**
+
+**Did not work:** every ClearHDR variant tried this session, however the preview was corrected
+— eroded, feathered at 3x3, feathered at 7x7, or left uncorrected. The operator's verdict on
+the best-looking corrected version was "it looks feathered but this is not fixing the root
+cause", and on being shown the numbers, "we still have the bad highlights".
+
+**Why, and it is not a preview problem.** The merge clamps at a hard ceiling — raw code 2412
+of 4095 (0.589) binned 12-bit, ~35,968 of 65,535 binned 16-bit, the same physical ceiling
+through two encodings. Above it there is no signal, only a flat plateau, so the highlight has
+no roll-off for any renderer to show. In the non-ClearHDR mode there is no merge, no clamp, and
+the lamp rolls off normally. **That comparison is the whole finding**: the ClearHDR preview's
+pink cast, its speckle and its ragged boundary are all downstream of a merge that stops at
+55-59% of the container, and correcting the preview can only choose what colour the plateau is
+painted.
+
+**What was removed, and what was kept.** The feathered matte (`clip_matte.hpp` and its wiring,
+three commits) is reverted. It worked as designed and was measured doing so — isolated whitened
+pixels 172 -> 5 at full preview resolution, boundary roughness 2.77 -> 1.07 — and that is
+exactly why it had to go: it made a symptom look solved. Kept: phase 2's per-frame timing
+instrumentation and cost cuts, and phase 1's hardware-confirmed erosion.
+
+**The method lesson, which is the durable part.** Three separate times this session an
+instrument or an argument agreed with a wrong conclusion — the half-resolution DNG thumbnail
+that hid the speckle, the synthetic lamp that ranked mean-blur above min-blur, and the
+inference that the boundary problem was a filtering problem at all. Each was caught by going
+one level more concrete: full-resolution frames off port 8000, real takes instead of synthetic
+ones, and finally a mode comparison instead of a filter sweep. **When a fix keeps not
+satisfying the operator, stop improving the fix and go check whether the defect is where you
+think it is.**
+
+**Confirmed by:** operator on the live preview, 2026-09-14 ~22:53, switching between modes 1
+and 3; the ceiling sweeps recorded in the entry above; `cinepi-raw` at `230f55e` with the
+revert deployed and 13/13 unit tests passing on the Pi.
+
+## 2026-09-14 — THE CLAMP IS AN OPERATING POINT, NOT A SENSOR PROPERTY: ClearHDR breaks above the documented gain window
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD (mode 3), tungsten lamp, shutter 180°,
+`hdr_gain_adder` at its ClearHDR default (+12 dB, register 0x3081 = 0x02), ISO swept 200 →
+3200 with the driver's own `ANALOG_GAIN=` journal lines confirming each write reached the
+sensor. `cinepi-raw` @ `230f55e`.
+
+**Worked — and this is the finding:**
+
+| ISO | ANALOG_GAIN | gain dB (0.3/code) | + EXP_GAIN 12 dB | peak raw code | plateau |
+|---|---|---|---|---|---|
+| 200 | 20 | 6.0 | 18.0 | **4095** | **none** |
+| 400 | 40 | 12.0 | 24.0 | **4095** | **none** |
+| 640 | 51 | 15.3 | 27.3 | **4095** | **none** |
+| 800 | 60 | 18.0 | 30.0 | **4095** | **none** |
+| 1200 | 71 | 21.3 | 33.3 | 3224 | 3188 |
+| 1600 | 80 | 24.0 | 36.0 | 2439 | 2408 |
+| 3200 | 80 | 24.0 | 36.0 | 2439 | 2408 |
+
+Below roughly the documented bound the merge uses the **whole container** and the plateau
+detector finds **no converged plateau at all**. Above it the ceiling collapses progressively:
+4095 → 3188 → 2408.
+
+`imx585.c` states the constraint at line 167: **`9.6dB ≤ GAIN + EXP_GAIN ≤ 29.1dB` for
+built-in combination**. With the ClearHDR default EXP_GAIN of +12 dB that caps analogue gain at
+17.1 dB = code 57. Code 60 (30.0 dB) is marginally over and still behaves; code 71 and code 80
+do not. The documented bound is essentially correct and the failure past it is graceful rather
+than sudden.
+
+**What this reframes.** Every "clamp" number in this log — 54100 at gain code 71, 48600 at code
+80, ~2900 and ~2582 and ~2344 per binning, the plateau "that moves with analogue gain" that
+`clip_plateau.hpp` exists to measure per frame — is **the same curve**: the merge degrading
+because CineMate's ISO mapping drives the sensor past its combination window. The clamp was
+never a property to be measured and corrected. It was an operating point to be avoided.
+
+The preview-side work follows from that. The pink cast, the equal-code convergence, the speckle
+and the ragged boundary are all downstream of a merge that has collapsed, and at an ISO inside
+the window none of them arise — the operator, watching live, said "now for a moment 12bit hdr
+looked good" at ISO 200-800 and "at higher iso it looks bad again" above it, before being shown
+this table.
+
+**Still open, seen by the operator at low ISO:** a thin line of speckled pixels where the bulb
+meets the lamp hood. At ISO 200-800 the bulb itself still reaches 4095, i.e. genuinely clips
+against the container, so the convergence rule still fires on that rim. That is a real clip
+rather than a collapsed merge, and it is a much smaller problem than the one above.
+
+**What to change, and where.** Not `cinepi-raw`. The fix is CineMate's ISO list for ClearHDR
+modes — recipe recommendation 4.4, now with a measured breakpoint rather than an inferred one:
+**keep ClearHDR ISO at or below 800 with the +12 dB adder** (or raise the bound by lowering
+EXP_GAIN, at the cost of highlight range, since EXP_GAIN is the HG/LG ratio that the extra
+range comes from). Above that the camera silently stops being an HDR camera.
+
+**Confirmed by:** the ISO sweep above with per-step `ANALOG_GAIN` confirmation, the operator
+watching the live preview through the sweep, and the driver's own constraint comment. The
+earlier sweeps in this log that found "nothing moves the ceiling" were all run at ISO 3200,
+i.e. entirely inside the broken region — which is why every control looked inert.
+
+## 2026-09-14 — why 12-bit cannot use its own plateau detector: the min-over-max bug was never fixed in clip_plateau.hpp
+
+**Tested:** 12-bit ClearHDR HD at ISO 800 (gain code 60, inside the working region established
+in the entry above), tungsten lamp, shutter 180°, correction toggled at runtime through
+`post-processing0.json`. `cinepi-raw` @ `230f55e`.
+
+**What was observed, three states, same scene and exposure:**
+
+| state | bulb | boundary |
+|---|---|---|
+| correction off (`clipConvergence 0`, `highlightRolloff 0`) | **magenta** | clean, lovely hood gradation |
+| correction on, table anchor 2344 | neutral | **oversized white blob with a speckled rim** |
+| correction on, `sensorClipCode 4000` (anchor inert) | **pink** | smooth |
+
+So the clamp at this healthy operating point is **real** — the bulb is magenta with the
+correction off, which kills the theory that the rule was firing on false positives against a
+naturally warm subject. But the anchor is doing the neutralising and it is anchored in the
+wrong place, while the convergence rule on its own does not catch this bulb.
+
+**The cause, and it is a bug this log already describes.** `clip_plateau.hpp`'s `add()` still
+gates on `mn * 10 < mx * 9` — **min over max, across all four raw samples**. The 2026-09-14
+entry "the ClearHDR clamp: three anchors, all wrong" records the identical mistake and its
+correction for the *convergence rule*:
+
+> Second-over-max, not min-over-max. The 12-bit HD lamp pins R and G on one code while B,
+> never near the ceiling, sits at 0.79. Requiring all three to agree missed it entirely and
+> reported zero converged quads while a fifth of the frame was pink.
+
+That fix landed in `clip_convergence.hpp` and **was never applied to the detector**. A tungsten
+bulb pins R and G and leaves B low, so `mn` is far below `mx`, the quad is excluded, and the
+detector reports `auto floor 0` — "nothing is clamped" — on a frame whose bulb is visibly
+clamped. Measured this session at ISO 800: `peak raw code 2698, auto floor 0`, while the
+convergence rule fired on 4.9M quads and the uncorrected render is magenta.
+
+**The chain that produces the artefact the operator sees:**
+
+1. detector blind to a two-channel clamp → reports no plateau,
+2. so the 12-bit path cannot adopt a measured anchor and falls back to the table constant 2344,
+3. which was measured at ISO 3200, inside the collapsed-merge region, so it sits far below the
+   real clip at a healthy ISO,
+4. so the anchor desaturates everything above 2344 — a third of the frame, most of it
+   legitimate highlight (37M quads per 120 frames against 4.9M with the anchor moved),
+5. and the rim of that oversized region is where the decision is noise-decided, which is the
+   speckle. Feathering smoothed that rim and was reverted because it treated step 5 while
+   steps 1-4 stood.
+
+**The fix this points to, not yet implemented:** teach `clip_plateau.hpp` the same
+second-over-max rule the convergence trigger already uses, then let 12-bit adopt the measured
+anchor per frame exactly as 16-bit does, with the table constants demoted to an explicit
+override. The anchor then lands on the actual clamp for the actual operating point, and both
+the oversized blob and its rim go with it. Note the detector also feeds 16-bit's
+operator-confirmed anchor, so the change needs checking there: for a blown sky all three
+channels clamp together and min ≈ second ≈ max, so it should be inert for that case, but that
+is a prediction and needs a take.
+
+**Confirmed by:** the three-state comparison above with full-resolution preview frames pulled
+from port 8000, the operator watching live ("now it is smooth but pink" for the third state),
+and the source of `clip_plateau.hpp` at `230f55e`.
+
+## 2026-09-14 — 12-bit finally anchors on its own measurement: a third of the frame whitened becomes a tenth
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD and 16-bit ClearHDR HD, tungsten lamp, ISO 800
+and 1600, shutter 180°, `cinepi-raw` `feature/clearhdr12-preview-clean` at `f0c5153` then
+`4143647`. Each build deployed and read off the stage's own periodic log line.
+
+**Worked — the 12-bit path, at ISO 800:**
+
+| | anchor | whitened | isolated | 
+|---|---|---|---|
+| table constant (before) | 2344 | **33.7% of frame** | 120 |
+| measured per frame (after) | **2609** (floor 2652, peak 2688) | **9.5% of frame** | 48 |
+
+The anchor now lands just under the frame's own peak instead of at a constant measured under
+quite different conditions, so the correction covers the bulb and stops eating the shade. The
+big white blob is gone, the lamp shade keeps its gradation, and most of the boundary is a clean
+circle; a patch of speckle remains in the glare next to the fitting.
+
+**Did not work first time, and the log line caught it in one build.** The first version changed
+the statistic (second-over-max on folded colour channels) but left the detector's gates where
+they were — 0.25 of full scale and a ratio of 0.9, which were calibrated for the OLD
+min-over-max test against a blown sky. Against second-over-max those are far too loose: a
+tungsten shade sits at second-over-max p50 0.958 / p95 0.978, so the shade itself read as a
+plateau. Measured on the camera: **anchor 1013 against a real clamp near 2600, and 79M quads
+whitened per 120 frames** against the table anchor's 37M. Tightening the gates to
+clip_convergence.hpp's own level_lo 0.40 and ratio_lo 0.98 fixed it. The detector and the
+trigger now ask the same question with the same numbers.
+
+**16-bit: inert, as predicted.** The prediction written before the test was that a blown sky
+clamps all three channels so min, second and max coincide and the change should not move the
+16-bit anchor. On the lamp it holds anyway: anchor 35429 and plateau floor 35968 before and
+after, whitened 38.9% -> 39.0%, roughness 2.70 -> 2.68. The detector does now see far more
+converged quads (72k -> 105k at ISO 800, 292k at ISO 1600) because it catches the two-channel
+clamps it used to discard, but the percentile lands in the same bin.
+
+**An operator-reported regression that was not one.** "16 bit above 800 iso... it worked before
+this feature branch" was tested directly by building phase 1 (`ea0077e`) and the branch tip
+(`230f55e`) on the Pi and shooting the same frame: white 351,753 vs 351,403, isolated 99 vs 89,
+roughness 2.65 vs 2.70 — identical within noise, same anchor, same plateau, same converged
+count. The branch did not regress it. What changed is the SUBJECT: 16-bit was confirmed good on
+a blown **sky**, where three channels clamp together and the detector sees it; it had never
+been pointed at a **tungsten lamp**, which clamps two and was invisible to the old detector.
+16-bit's remaining jagged boundary at these ISOs is the merge-collapse operating point, not the
+anchor — peak raw code reads exactly 35968, the ceiling.
+
+**Confirmed by:** THE OPERATOR, on the live preview, after the second build — "lastly, 12 bit
+hdr looked good! in the last run". That is the first unqualified pass any ClearHDR mode has had
+from the camera operator in this investigation, and it came from moving the anchor onto the
+frame's own measurement rather than from anything done to the preview's appearance. Supported
+by the stage's periodic log line across four builds, full-resolution preview frames pulled from
+port 8000, and 13/13 unit tests on the Pi at each build. New tests in `ccmp_preview_test.cpp`
+cover the tungsten two-channel clamp in both directions and fail against the old feed.
+
+## 2026-09-14 — can ClearHDR be used at high ISO? No, and the reason is structural
+
+**The question, from the operator, after a night of chasing preview artefacts that all turned
+out to be downstream of gain.** Answer, from the measurements in the entries above:
+
+**No. Above analogue gain code ~60 (ISO ~800 with the shipped +12 dB gain adder) ClearHDR
+returns less highlight range than SDR, while still charging the full price for it.**
+
+The mechanism, and why there is no setting that escapes it:
+
+1. ClearHDR's extra range is the HG/LG ratio, and that ratio IS `EXP_GAIN` (register 0x3081,
+   the `hdr_gain_adder` menu), +12 dB by default.
+2. `imx585.c` line 167 documents the sensor's constraint: `9.6dB ≤ GAIN + EXP_GAIN ≤ 29.1dB`
+   for built-in combination. With EXP_GAIN at +12 dB that caps analogue gain at 17.1 dB, i.e.
+   code 57 — about ISO 640-800.
+3. Measured ceiling against gain code, 12-bit HD, everything else fixed:
+
+   | gain code | 20 | 40 | 51 | 60 | 71 | 80 |
+   |---|---|---|---|---|---|---|
+   | ceiling (of 4095) | 4095 | 4095 | 4095 | 4095 | 3188 | 2408 |
+
+   At code 80 that is 59% of the container — roughly a stop and a half of highlight range
+   simply gone, and the lost region is exactly what ClearHDR was turned on to capture.
+4. **The obvious escape does not work.** Lowering `EXP_GAIN` to keep the sum inside the window
+   at high ISO was measured: adder 0 (+0 dB) at gain code 80 gives a ceiling of **1452**, worse
+   again — because removing EXP_GAIN removes the HG/LG ratio, and with no ratio there is no
+   HDR. Either the sum leaves the documented window and the merge collapses, or the ratio goes
+   to zero and there is nothing to merge.
+
+So high-ISO ClearHDR pays the compander, the full-frame CPU re-render, the clamp artefacts and
+the anchor problem, and hands back a smaller highlight range than the SDR mode would have. That
+is why the operator's own verdict on the same lamp was that the non-ClearHDR mode "looks nice".
+
+**Practical guidance:** ClearHDR at ISO 200-800. For more sensitivity use SDR, or add light,
+open up, or lengthen the shutter. **Product fix, still unwritten:** constrain the ISO list for
+ClearHDR modes in CineMate (recipe recommendation 4.4), which now has a measured breakpoint
+rather than an inferred one — and prefer a constraint to a warning, because nothing in the
+preview tells an operator that the mode has quietly stopped being an HDR mode.
+
+**Confirmed by:** the gain and adder sweeps of 2026-09-14 with `ANALOG_GAIN=` journal
+confirmation on every step, and the driver's own constraint comment.
