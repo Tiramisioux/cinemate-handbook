@@ -22,9 +22,12 @@ prescriptions were measured wrong and are corrected there.
 - **Wrong in this brief:** phase 3's mean-then-blur ranks worse than erode-then-blur on real
   takes, and phase 4's option A does not help, because the render is there for the compander
   rather than the highlight and is 71% of the stage.
-- **Left to do, and it is not in cinepi-raw:** constrain the ClearHDR ISO list to 200-800 in
-  CineMate. Above that the sensor leaves its documented gain window, the merge collapses, and
-  the camera quietly stops being an HDR camera.
+- **Done since:** the ClearHDR ISO cap in CineMate. It lands on 799, the last value inside the
+  sensor's combination window -- 800 is the first outside it, which a gain sweep settled after
+  an initial implementation had used 800. The 800 step stays selectable and lands on 799,
+  tinted green in both interfaces. Note `dev` still carries an earlier 1585 ceiling from a
+  first attempt that fixed the digital-gain problem rather than the merge collapse; the
+  feature branch supersedes it, so whoever merges should confirm 799 wins.
 
 ## The goal
 
