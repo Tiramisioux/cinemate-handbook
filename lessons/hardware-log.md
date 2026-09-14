@@ -2506,3 +2506,62 @@ range comes from). Above that the camera silently stops being an HDR camera.
 watching the live preview through the sweep, and the driver's own constraint comment. The
 earlier sweeps in this log that found "nothing moves the ceiling" were all run at ISO 3200,
 i.e. entirely inside the broken region — which is why every control looked inert.
+
+## 2026-09-14 — why 12-bit cannot use its own plateau detector: the min-over-max bug was never fixed in clip_plateau.hpp
+
+**Tested:** 12-bit ClearHDR HD at ISO 800 (gain code 60, inside the working region established
+in the entry above), tungsten lamp, shutter 180°, correction toggled at runtime through
+`post-processing0.json`. `cinepi-raw` @ `230f55e`.
+
+**What was observed, three states, same scene and exposure:**
+
+| state | bulb | boundary |
+|---|---|---|
+| correction off (`clipConvergence 0`, `highlightRolloff 0`) | **magenta** | clean, lovely hood gradation |
+| correction on, table anchor 2344 | neutral | **oversized white blob with a speckled rim** |
+| correction on, `sensorClipCode 4000` (anchor inert) | **pink** | smooth |
+
+So the clamp at this healthy operating point is **real** — the bulb is magenta with the
+correction off, which kills the theory that the rule was firing on false positives against a
+naturally warm subject. But the anchor is doing the neutralising and it is anchored in the
+wrong place, while the convergence rule on its own does not catch this bulb.
+
+**The cause, and it is a bug this log already describes.** `clip_plateau.hpp`'s `add()` still
+gates on `mn * 10 < mx * 9` — **min over max, across all four raw samples**. The 2026-09-14
+entry "the ClearHDR clamp: three anchors, all wrong" records the identical mistake and its
+correction for the *convergence rule*:
+
+> Second-over-max, not min-over-max. The 12-bit HD lamp pins R and G on one code while B,
+> never near the ceiling, sits at 0.79. Requiring all three to agree missed it entirely and
+> reported zero converged quads while a fifth of the frame was pink.
+
+That fix landed in `clip_convergence.hpp` and **was never applied to the detector**. A tungsten
+bulb pins R and G and leaves B low, so `mn` is far below `mx`, the quad is excluded, and the
+detector reports `auto floor 0` — "nothing is clamped" — on a frame whose bulb is visibly
+clamped. Measured this session at ISO 800: `peak raw code 2698, auto floor 0`, while the
+convergence rule fired on 4.9M quads and the uncorrected render is magenta.
+
+**The chain that produces the artefact the operator sees:**
+
+1. detector blind to a two-channel clamp → reports no plateau,
+2. so the 12-bit path cannot adopt a measured anchor and falls back to the table constant 2344,
+3. which was measured at ISO 3200, inside the collapsed-merge region, so it sits far below the
+   real clip at a healthy ISO,
+4. so the anchor desaturates everything above 2344 — a third of the frame, most of it
+   legitimate highlight (37M quads per 120 frames against 4.9M with the anchor moved),
+5. and the rim of that oversized region is where the decision is noise-decided, which is the
+   speckle. Feathering smoothed that rim and was reverted because it treated step 5 while
+   steps 1-4 stood.
+
+**The fix this points to, not yet implemented:** teach `clip_plateau.hpp` the same
+second-over-max rule the convergence trigger already uses, then let 12-bit adopt the measured
+anchor per frame exactly as 16-bit does, with the table constants demoted to an explicit
+override. The anchor then lands on the actual clamp for the actual operating point, and both
+the oversized blob and its rim go with it. Note the detector also feeds 16-bit's
+operator-confirmed anchor, so the change needs checking there: for a blown sky all three
+channels clamp together and min ≈ second ≈ max, so it should be inert for that case, but that
+is a prediction and needs a take.
+
+**Confirmed by:** the three-state comparison above with full-resolution preview frames pulled
+from port 8000, the operator watching live ("now it is smooth but pink" for the third state),
+and the source of `clip_plateau.hpp` at `230f55e`.
