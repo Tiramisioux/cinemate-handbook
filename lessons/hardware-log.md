@@ -2408,3 +2408,44 @@ given ~11s to settle and read off two consecutive periodic log lines; `ANALOG_GA
 confirmed in the journal, so the gain writes did reach the sensor rather than being silently
 dropped. All settings restored afterwards (blend 5, adder 1, thresholds unset, ISO 3200,
 shutter 96°, mode 3).
+
+## 2026-09-14 — SDR "looks nice" and ClearHDR does not: the preview correction was cosmetics, and was removed
+
+**Tested:** the same tungsten lamp, same rig, switched between 12-bit HD **ClearHDR** (mode 3)
+and 12-bit HD **non-ClearHDR** (mode 1) — same sensor, same size, same shutter and ISO, the
+merge the only difference. Operator watching the live preview.
+
+**Worked:** the non-ClearHDR mode. Operator's words, unprompted: **"now it looks nice!"**
+
+**Did not work:** every ClearHDR variant tried this session, however the preview was corrected
+— eroded, feathered at 3x3, feathered at 7x7, or left uncorrected. The operator's verdict on
+the best-looking corrected version was "it looks feathered but this is not fixing the root
+cause", and on being shown the numbers, "we still have the bad highlights".
+
+**Why, and it is not a preview problem.** The merge clamps at a hard ceiling — raw code 2412
+of 4095 (0.589) binned 12-bit, ~35,968 of 65,535 binned 16-bit, the same physical ceiling
+through two encodings. Above it there is no signal, only a flat plateau, so the highlight has
+no roll-off for any renderer to show. In the non-ClearHDR mode there is no merge, no clamp, and
+the lamp rolls off normally. **That comparison is the whole finding**: the ClearHDR preview's
+pink cast, its speckle and its ragged boundary are all downstream of a merge that stops at
+55-59% of the container, and correcting the preview can only choose what colour the plateau is
+painted.
+
+**What was removed, and what was kept.** The feathered matte (`clip_matte.hpp` and its wiring,
+three commits) is reverted. It worked as designed and was measured doing so — isolated whitened
+pixels 172 -> 5 at full preview resolution, boundary roughness 2.77 -> 1.07 — and that is
+exactly why it had to go: it made a symptom look solved. Kept: phase 2's per-frame timing
+instrumentation and cost cuts, and phase 1's hardware-confirmed erosion.
+
+**The method lesson, which is the durable part.** Three separate times this session an
+instrument or an argument agreed with a wrong conclusion — the half-resolution DNG thumbnail
+that hid the speckle, the synthetic lamp that ranked mean-blur above min-blur, and the
+inference that the boundary problem was a filtering problem at all. Each was caught by going
+one level more concrete: full-resolution frames off port 8000, real takes instead of synthetic
+ones, and finally a mode comparison instead of a filter sweep. **When a fix keeps not
+satisfying the operator, stop improving the fix and go check whether the defect is where you
+think it is.**
+
+**Confirmed by:** operator on the live preview, 2026-09-14 ~22:53, switching between modes 1
+and 3; the ceiling sweeps recorded in the entry above; `cinepi-raw` at `230f55e` with the
+revert deployed and 13/13 unit tests passing on the Pi.
