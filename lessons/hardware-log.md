@@ -2304,3 +2304,51 @@ original 102-drops-in-20-minutes report was about and what a short take does not
 **Confirmed by:** the agent driving the Pi through `cinemate_dev.py` on 2026-09-14 22:19-22:23;
 each configuration was a JSON edit plus a session restart, and `/home/pi/post-processing0.json`
 was restored to its original two-stage contents afterwards.
+
+## 2026-09-14 — "still speckles": the operator's eyes beat the agent's evidence, because the evidence was half-resolution
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD, tungsten lamp clamping (peak raw code 2442
+against clip anchor 2344), `cinepi-raw` `feature/clearhdr12-preview-clean` @ `b725144` then
+`5f4477c`. Frames pulled live from the MJPEG stream on port 8000 at the preview's own
+1280x720, with `clipFeather` as a runtime A/B (no rebuild).
+
+**Did not work — the agent's claim that the ragged boundary was fixed.** It was made off the
+embedded DNG thumbnail, which is **640x360 against the lores plane's 1280x720**. One matte
+block is 2x2 lores pixels, so the thumbnail's 2x downscale averages away exactly the
+granularity the fix is about. The operator looked at the live preview and said "still
+speckles", and was right.
+
+**What was actually true, measured at full resolution:**
+
+| | isolated whitened px | boundary roughness |
+|---|---|---|
+| feathering off | 172 | 2.77 |
+| 3x3 matte | 5 | 1.41 |
+| 7x7 matte | 2 | **1.07** |
+
+(roughness = boundary perimeter over that of a circle of equal area; 1.00 is smooth.)
+
+So the 3x3 matte did precisely what it was designed to do — **a 97% cut in isolated whitened
+pixels** — and that was not the complaint. The complaint was the SERRATION of the boundary
+itself, whose teeth are many blocks wide and which a 3x3 kernel cannot reach. Two different
+defects with one name.
+
+**The fix, and a hypothesis killed on the way:** widening the box to 7x7 takes roughness to
+1.07 for 1.11% of the far yellow desaturated, and costs +1.0ms because the blur is now a
+separable running-sum box, O(1) per block whatever the radius. The obvious alternative —
+raise `ratio_lo` so the yellow is excluded — was measured first and is **strictly worse**:
+roughness moves the wrong way (1.26 -> 1.34 at 0.99, 6.09 at 0.995). Raising the threshold
+does not make the decision less noisy, it only moves where the noise sits. The offline sweep
+predicted 1.04 at radius 3 and the live preview measured 1.07.
+
+**The lesson, which is about evidence and not about blur kernels: check that your instrument
+resolves the thing you are claiming about.** This project's standing rule is that a diagnostic
+which cannot come out wrong is not evidence. The thumbnail could come out wrong — it just
+could not come out wrong *at the scale that mattered*, which is the same failure wearing a
+different hat, and it is the fourth time in this investigation that a number or an image
+agreed with a wrong conclusion. **Pull preview frames from port 8000 at full resolution when
+judging preview quality; the DNG thumbnail is half-res and will flatter you.**
+
+**Confirmed by:** the operator's report against the live HDMI/MJPEG preview on 2026-09-14
+~22:26, then the agent's full-resolution A/B at 22:28-22:35. Still outstanding: the operator's
+own look at the 7x7 result.
