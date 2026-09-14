@@ -2449,3 +2449,60 @@ think it is.**
 **Confirmed by:** operator on the live preview, 2026-09-14 ~22:53, switching between modes 1
 and 3; the ceiling sweeps recorded in the entry above; `cinepi-raw` at `230f55e` with the
 revert deployed and 13/13 unit tests passing on the Pi.
+
+## 2026-09-14 — THE CLAMP IS AN OPERATING POINT, NOT A SENSOR PROPERTY: ClearHDR breaks above the documented gain window
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD (mode 3), tungsten lamp, shutter 180°,
+`hdr_gain_adder` at its ClearHDR default (+12 dB, register 0x3081 = 0x02), ISO swept 200 →
+3200 with the driver's own `ANALOG_GAIN=` journal lines confirming each write reached the
+sensor. `cinepi-raw` @ `230f55e`.
+
+**Worked — and this is the finding:**
+
+| ISO | ANALOG_GAIN | gain dB (0.3/code) | + EXP_GAIN 12 dB | peak raw code | plateau |
+|---|---|---|---|---|---|
+| 200 | 20 | 6.0 | 18.0 | **4095** | **none** |
+| 400 | 40 | 12.0 | 24.0 | **4095** | **none** |
+| 640 | 51 | 15.3 | 27.3 | **4095** | **none** |
+| 800 | 60 | 18.0 | 30.0 | **4095** | **none** |
+| 1200 | 71 | 21.3 | 33.3 | 3224 | 3188 |
+| 1600 | 80 | 24.0 | 36.0 | 2439 | 2408 |
+| 3200 | 80 | 24.0 | 36.0 | 2439 | 2408 |
+
+Below roughly the documented bound the merge uses the **whole container** and the plateau
+detector finds **no converged plateau at all**. Above it the ceiling collapses progressively:
+4095 → 3188 → 2408.
+
+`imx585.c` states the constraint at line 167: **`9.6dB ≤ GAIN + EXP_GAIN ≤ 29.1dB` for
+built-in combination**. With the ClearHDR default EXP_GAIN of +12 dB that caps analogue gain at
+17.1 dB = code 57. Code 60 (30.0 dB) is marginally over and still behaves; code 71 and code 80
+do not. The documented bound is essentially correct and the failure past it is graceful rather
+than sudden.
+
+**What this reframes.** Every "clamp" number in this log — 54100 at gain code 71, 48600 at code
+80, ~2900 and ~2582 and ~2344 per binning, the plateau "that moves with analogue gain" that
+`clip_plateau.hpp` exists to measure per frame — is **the same curve**: the merge degrading
+because CineMate's ISO mapping drives the sensor past its combination window. The clamp was
+never a property to be measured and corrected. It was an operating point to be avoided.
+
+The preview-side work follows from that. The pink cast, the equal-code convergence, the speckle
+and the ragged boundary are all downstream of a merge that has collapsed, and at an ISO inside
+the window none of them arise — the operator, watching live, said "now for a moment 12bit hdr
+looked good" at ISO 200-800 and "at higher iso it looks bad again" above it, before being shown
+this table.
+
+**Still open, seen by the operator at low ISO:** a thin line of speckled pixels where the bulb
+meets the lamp hood. At ISO 200-800 the bulb itself still reaches 4095, i.e. genuinely clips
+against the container, so the convergence rule still fires on that rim. That is a real clip
+rather than a collapsed merge, and it is a much smaller problem than the one above.
+
+**What to change, and where.** Not `cinepi-raw`. The fix is CineMate's ISO list for ClearHDR
+modes — recipe recommendation 4.4, now with a measured breakpoint rather than an inferred one:
+**keep ClearHDR ISO at or below 800 with the +12 dB adder** (or raise the bound by lowering
+EXP_GAIN, at the cost of highlight range, since EXP_GAIN is the HG/LG ratio that the extra
+range comes from). Above that the camera silently stops being an HDR camera.
+
+**Confirmed by:** the ISO sweep above with per-step `ANALOG_GAIN` confirmation, the operator
+watching the live preview through the sweep, and the driver's own constraint comment. The
+earlier sweeps in this log that found "nothing moves the ceiling" were all run at ISO 3200,
+i.e. entirely inside the broken region — which is why every control looked inert.
