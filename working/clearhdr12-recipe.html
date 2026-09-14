@@ -155,6 +155,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
 <nav class="nav" aria-label="Sections">
   <ul>
     <li><a href="#verdict">Verdict</a></li>
+    <li><a href="#measured">What the camera said</a></li>
     <li><a href="#pipeline">Pipeline</a></li>
     <li><a href="#paths">Three paths</a></li>
     <li><a href="#shutter">Rolling shutter</a></li>
@@ -191,16 +192,43 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
   </div>
   <div class="stats">
     <div class="stat"><div class="stat-n">identical</div><div class="stat-l">Advertised frame rate, both depths, every link frequency <span class="chip ok">confirmed</span></div></div>
-    <div class="stat"><div class="stat-n">+1.2%</div><div class="stat-l">File size per 4K frame, 16-bit log-12 against today's 12-bit <span class="chip ok">confirmed</span></div></div>
+    <div class="stat"><div class="stat-n">+1.8%</div><div class="stat-l">File size per 4K frame, 16-bit log-12 against today's 12-bit <span class="chip probable">probable</span></div></div>
     <div class="stat"><div class="stat-n">172 of 4096</div><div class="stat-l">Codes the compander spends where the log curve is up to 32× finer <span class="chip ok">confirmed</span></div></div>
     <div class="stat"><div class="stat-n">unmeasured</div><div class="stat-l">Every per-frame CPU cost on the Pi itself <span class="chip unknown">unknown</span></div></div>
   </div>
   <p class="col" style="margin-top:26px">The third figure is the real argument. Both encodings put a 16-bit linear signal into 12 bits. The sensor's compander spends 172 codes on the range from 500 to 11500 in linear units, at 64 units per code. CineMate's own log curve spends 1378 codes on the same range, between 2 and 26 units per code. Where the picture lives, the log curve is between 4 and 32 times finer. The compander is finer only above roughly 15000, which is the region the merge clamp flattens anyway.</p>
-  <p class="col"><strong>One correction to the obvious reading of the file-size figure.</strong> The comparison is not a reason to expect relief on the write stream. With the thumbnail this camera actually ships, a 4K frame at 25 fps writes 380 MB/s today and 385 MB/s under the recommendation. This rig has been seen to stall at 355 MB/s. The storage question is therefore not a cost of switching; it is a problem the current default already has.</p>
+  <p class="col"><strong>One caution about the file-size figure.</strong> It is not a reason to expect relief on the write stream either way: with the thumbnail a live take was seen to carry, both depths land near 330 MB/s at 4K and 25 frames per second, within a couple of percent of each other.</p>
+</section>
+
+<section id="measured">
+  <div class="section-head"><span class="n">02</span><h2>What the camera said afterwards</h2></div>
+  <p class="col">This page was written from code and archived measurements. It was then used as the brief for a night of work at the camera, and several of its claims did not survive contact. The hardware log is the record; this section says only what changed and why, so nothing here quietly disagrees with it.</p>
+  <div class="verdict col" style="border-left-color:var(--ok)">
+    <p><strong>12-bit ClearHDR now passes.</strong> The operator's verdict after the final build was that it looked good, which is the first unqualified pass any ClearHDR mode has had in this investigation. It came from letting the 12-bit path anchor on its own per-frame measurement instead of a table constant, not from anything done to the preview's appearance.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>What this page said</th><th>What the camera showed</th></tr></thead>
+      <tbody>
+        <tr><td>The clamp moves with gain, blend and scene, so it must be measured every frame.</td><td><strong>It is an operating point, not a property.</strong> Below sensor gain code 60 there is no plateau at all: the merge uses the whole container. Above the documented gain window it collapses progressively, 4095 to 3188 to 2408. Every clamp number ever recorded here is that one curve.</td></tr>
+        <tr><td>Keep ClearHDR between ISO 200 and 1400.</td><td><strong>200 to 800.</strong> My figure assumed a 6 dB gain adder; the sensor actually runs at 12 dB, which caps usable gain lower. The breakpoint is now measured rather than inferred.</td></tr>
+        <tr><td>Feather the matte: take the mean across each block, then blur.</td><td><strong>Backwards.</strong> On real takes the mean lets one fired quad drag a whole block, and desaturates 25.7% of the surround against 4.6% for keeping the erosion and blurring that. My synthetic lamp ranked them the other way round, which is how the wrong prescription got written.</td></tr>
+        <tr><td>Try the in-place correction on 12-bit to remove the render from the highlight path.</td><td><strong>Does not help.</strong> The render is 71% of the stage and it is there for the compander, not the highlight, so removing the highlight work from it leaves the cost untouched.</td></tr>
+        <tr><td>The write stream is the gate, at 380 MB/s against a 355 MB/s stall.</td><td><strong>Overstated.</strong> The thumbnail is half resolution, not the full preview plane, so both candidates sit near 330 MB/s, below the stall. See the note under the throughput table.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>The root cause nobody had found</h3>
+    <p>The artefacts that reverted this work twice came from a bug this page did not spot. The rule that decides whether a highlight is clamped was corrected months ago to compare the second-brightest channel against the brightest, because a tungsten bulb pins two channels and leaves the third low. That correction was applied to the trigger and never to the detector that measures where the clamp sits. So on a tungsten subject the detector reported nothing clamped, the 12-bit path fell back to a constant measured under quite different conditions, and the correction whitened a third of the frame with a noisy rim. Feathering that rim was treating the symptom, which is why it was reverted after it worked.</p>
+    <p>Teaching the detector the same rule the trigger already used took the whitened area from 33.7% of the frame to 9.5% and produced the operator's pass.</p>
+    <h3>And the thing none of it fixes</h3>
+    <p>Above the gain window the merge stops at 55 to 59 percent of the container, so a blown highlight has no roll-off for any renderer to show. Switching the same lamp to the non-HDR mode drew an unprompted "now it looks nice" from the operator. Correcting the preview can only choose what colour a flat plateau is painted. That is why the remaining fix is a constraint in the camera's ISO list rather than anything in the preview code.</p>
+  </div>
 </section>
 
 <section id="pipeline">
-  <div class="section-head"><span class="n">02</span><h2>What happens to the data</h2></div>
+  <div class="section-head"><span class="n">03</span><h2>What happens to the data</h2></div>
   <p class="col">The defect is not a bug in one function. It is a domain mismatch that survives every stage: the sensor compresses its own tone curve into 12 bits, and nothing downstream is told. The image signal processor reads companded codes as if they were linear, which crushes the mid-tones toward magenta, and white balance then drives the clamped highlights pink.</p>
 
   <figure>
@@ -288,7 +316,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
 </section>
 
 <section id="paths">
-  <div class="section-head"><span class="n">03</span><h2>Three ways forward</h2></div>
+  <div class="section-head"><span class="n">04</span><h2>Three ways forward</h2></div>
   <p class="col">Ranked by how many unknowns stand between here and a working camera, not by elegance.</p>
   <div class="paths">
     <article class="path lead">
@@ -306,7 +334,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
       <h3>Keep the CPU render, optimise it</h3>
       <dl>
         <dt>Needs</dt><dd>cinepi-raw only. This is the reverted branch plus integer gating of the trigger.</dd>
-        <dt>Fixes</dt><dd>The preview in both depths. Nothing for the file, the statistics or the structural cost.</dd>
+        <dt>Fixes</dt><dd>The preview in both depths. Since measured on the Pi: the correction is 10.2 ms of the stage and the bare render underneath it is 24.5 ms, so optimising the correction cannot reach the budget. Threading the render is the only lever that touches the 71% that matters.</dd>
         <dt>Costs</dt><dd>The 12-bit path keeps a full-frame render per frame, and its per-binning anchors. The ragged boundary against a yellow subject stays open.</dd>
         <dt>Note</dt><dd>Not an alternative to rank 1 but its prerequisite: the clean 16-bit preview exists only on this branch.</dd>
       </dl>
@@ -360,19 +388,19 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
     <table>
       <thead><tr><th>Configuration</th><th class="num">Bytes per frame</th><th class="num">Write rate</th><th>Note</th></tr></thead>
       <tbody>
-        <tr><td>12-bit compressed, today's default</td><td class="num">15 207 100</td><td class="num">380 MB/s</td><td>The baseline, and it is already above what this rig has sustained</td></tr>
-        <tr><td>16-bit with log-12, recommended</td><td class="num">15 385 790</td><td class="num">385 MB/s</td><td>1.2% more than today</td></tr>
-        <tr><td>16-bit with log-12, rows cropped</td><td class="num">15 155 390</td><td class="num">379 MB/s</td><td>Slightly <em>less</em> than today</td></tr>
-        <tr><td>16-bit, log encode left off</td><td class="num">19 609 790</td><td class="num">490 MB/s</td><td>What ships if the setting is not changed</td></tr>
-        <tr><td>Either depth, JPEG thumbnail</td><td class="num">≈ 12 500 000</td><td class="num">≈ 315 MB/s</td><td>The cheapest throughput win available, already implemented</td></tr>
+        <tr><td>12-bit compressed, today's default</td><td class="num">13 133 500</td><td class="num">328 MB/s</td><td>The baseline</td></tr>
+        <tr><td>16-bit with log-12, recommended</td><td class="num">13 363 900</td><td class="num">334 MB/s</td><td>1.8% more than today</td></tr>
+        <tr><td>16-bit with log-12, rows cropped</td><td class="num">13 133 500</td><td class="num">328 MB/s</td><td>The same as today</td></tr>
+        <tr><td>16-bit, log encode left off</td><td class="num">17 587 900</td><td class="num">440 MB/s</td><td>What ships if the setting is not changed</td></tr>
+        <tr><td>Either depth, JPEG thumbnail</td><td class="num">≈ 12 460 000</td><td class="num">≈ 311 MB/s</td><td>Still the cheapest throughput win, already implemented</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="col">Recorded on this rig: 264 MB/s ran clean for the whole take, and 355 MB/s stalled after fifteen to twenty seconds. Both candidate defaults sit above that stall. The soak therefore has to be run on <em>both</em> depths or its result cannot be attributed, and switching the thumbnail to JPEG buys more headroom than the choice of depth does.</p>
+  <p class="col">These figures use a half-resolution thumbnail, which is what a live take was observed to carry. An earlier reading of the boot code said the full preview plane, which would add about two megabytes to every frame; the two disagree and that disagreement is worth settling, because it moves every row of this table. Recorded on this rig: 264 MB/s ran clean for a whole take and 355 MB/s stalled within twenty seconds. On the half-resolution figures both candidates sit under that stall, so throughput is a caution rather than the gate this page first called it.</p>
 </section>
 
 <section id="shutter">
-  <div class="section-head"><span class="n">04</span><h2>Rolling shutter</h2></div>
+  <div class="section-head"><span class="n">05</span><h2>Rolling shutter</h2></div>
   <p class="col">Nothing in the camera's documentation mentions rolling shutter, and ClearHDR changes it in a way that is currently unquantified. The sensor doubles the frame length when ClearHDR is on, at an unchanged line period. Whether that extra time is readout or blanking decides whether the skew doubles, and no source in any of the four drivers says which.</p>
   <div class="tablewrap">
     <table>
@@ -392,7 +420,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
 </section>
 
 <section id="clamp">
-  <div class="section-head"><span class="n">05</span><h2>The merge clamp</h2></div>
+  <div class="section-head"><span class="n">06</span><h2>The merge clamp</h2></div>
   <p class="col">Three shipped builds anchored the highlight correction on a raw code, and all three were wrong, because the code is not a sensor property. It moves with analogue gain, with the blend setting and with the scene.</p>
   <div class="tablewrap">
     <table>
@@ -407,25 +435,26 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
   </div>
   <div class="col">
     <p>The working model is that below the selection threshold the output follows the high-gain read, and above its saturation it follows the low-gain read scaled by an alignment factor. The ceiling is that scaled maximum. What is not known is whether the factor tracks the gain adder, whether the blend weights enter it, and whether the fall with analogue gain is a hard limit at the documented 29.1 dB sum or a continuous loss.</p>
-    <p>One finding is shippable without settling any of that. The application note bounds the sum of analogue gain and the gain adder to between 9.6 and 29.1 dB. With the shipped adder of 6 dB, that admits sensor gain codes 12 through 77. CineMate's ISO steps land on code 0 at ISO 100, which is under the floor, and on code 80 from ISO 1600 upward, which is over the ceiling. The mapping reproduces all three gain codes recorded in the camera's own logs, so the range is arithmetic, not inference.</p>
+    <p><strong>This has since been measured, and it reframes everything above.</strong> The application note bounds the sum of sensor gain and the gain adder to between 9.6 and 29.1 dB. The sensor runs the adder at 12 dB, which caps usable gain around code 57. Swept on the camera with each gain write confirmed in the journal, the merge uses the entire container below that and collapses progressively above it. So the plateau is not a property that moves; it is the merge failing, and the numbers this page and the hardware log have been chasing for a week are all points on that one curve.</p>
   </div>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>ISO</th><th class="num">Gain code</th><th class="num">Sum with +6 dB adder</th><th>Inside the documented bound</th></tr></thead>
+      <thead><tr><th>ISO</th><th class="num">Gain code</th><th class="num">Ceiling, of 4095</th><th>What the merge is doing</th></tr></thead>
       <tbody>
-        <tr><td>100</td><td class="num">0</td><td class="num">6.0 dB</td><td>No, below the floor</td></tr>
-        <tr><td>200</td><td class="num">20</td><td class="num">12.0 dB</td><td>Yes</td></tr>
-        <tr><td>1200</td><td class="num">71</td><td class="num">27.3 dB</td><td>Yes, and matches the journal</td></tr>
-        <tr><td>1400</td><td class="num">76</td><td class="num">28.8 dB</td><td>Yes, the last step that does</td></tr>
-        <tr><td>1600 and above</td><td class="num">80</td><td class="num">30.0 dB</td><td>No, over the ceiling</td></tr>
-      </tbody>
+        <tr><td>200</td><td class="num">20</td><td class="num">4095</td><td>Whole container, no plateau at all</td></tr>
+        <tr><td>400</td><td class="num">40</td><td class="num">4095</td><td>Whole container</td></tr>
+        <tr><td>640</td><td class="num">51</td><td class="num">4095</td><td>Whole container</td></tr>
+        <tr><td>800</td><td class="num">60</td><td class="num">4095</td><td>Whole container, the last step that works</td></tr>
+        <tr><td>1200</td><td class="num">71</td><td class="num">3188</td><td>Collapsing</td></tr>
+        <tr><td>1600 and above</td><td class="num">80</td><td class="num">2408</td><td>59% of the container: about a stop and a half of highlight simply gone</td></tr>
+      </tbody></tbody>
     </table>
   </div>
 </section>
 
 <section id="recipe">
-  <div class="section-head"><span class="n">06</span><h2>The recipe</h2></div>
-  <p class="col">Apply top to bottom. A line marked unknown must not ship before the measurement named beside it.</p>
+  <div class="section-head"><span class="n">07</span><h2>The recipe</h2></div>
+  <p class="col">Apply top to bottom. A line marked unknown must not ship before the measurement named beside it. Several lines here have since been worked at the camera: the preview instrumentation and cost cuts landed, the detector now measures the clamp with the same rule the trigger uses, and 12-bit passed the operator. The ISO constraint below is the substantial one still unwritten.</p>
   <div class="recipe">
 
     <div class="layer">
@@ -433,7 +462,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
       <ol class="steps">
         <li><span class="id">1.1</span><span class="chip ok">confirmed</span><span class="body">Leave the ClearHDR register set alone. <span class="reg">WDMODE 0x10</span>, <span class="reg">COMBI_EN 0x02</span>, thresholds <span class="reg">0x0FFF</span> and <span class="reg">0</span>, compander slopes 1/64 and 1/16, knees 500 and 11500. Do not touch the unnamed ClearHDR writes; nobody knows what they do.</span></li>
         <li><span class="id">1.2</span><span class="chip ok">confirmed</span><span class="body">Blend stays at index 5. The low indices carry the speckle and flat-pedestal defects that cost a week in August.</span></li>
-        <li><span class="id">1.3</span><span class="chip probable">probable</span><span class="body">Keep the sum of sensor gain and the gain adder inside 9.6 to 29.1 dB. With the shipped adder that is ISO 200 to 1400. Implement as an ISO limit in CineMate, not a driver change.</span></li>
+        <li><span class="id">1.3</span><span class="chip ok">confirmed</span><span class="body">Keep the sum of sensor gain and the gain adder inside 9.6 to 29.1 dB. Measured on the camera, that is <strong>ISO 200 to 800</strong>. Implement as an ISO limit in CineMate, not a driver change, and prefer a constraint to a warning: nothing in the preview tells an operator the mode has quietly stopped being an HDR mode.</span></li>
         <li><span class="id">1.4</span><span class="chip unknown">unknown</span><span class="body">Do not move the compander knees onto the hardware curve's grid unless the front-end path is chosen and its output domain settled. Both knee anchors would need re-measuring per mode.</span></li>
       </ol>
     </div>
@@ -465,7 +494,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
         <li><span class="id">4.1</span><span class="chip probable">probable</span><span class="body">Move the boot default to the 16-bit modes. The encode resolver already maps 16-bit sources to log-12. Leave the 12-bit entries <em>enabled</em>: disabling them renumbers every ClearHDR mode, and the selected mode persists in Redis across boots, so a saved setting would silently become a different capture.</span></li>
         <li><span class="id">4.2</span><span class="chip ok">confirmed</span><span class="body">Turn the log encode on. It ships <em>off</em> for both cameras. Without this change the new default writes 490 MB/s instead of 385, which is the difference between a plausible take and a stall.</span></li>
         <li><span class="id">4.3</span><span class="chip ok">confirmed</span><span class="body">Hold the blend and gain-adder defaults until the sweeps below say otherwise.</span></li>
-        <li><span class="id">4.4</span><span class="chip probable">probable</span><span class="body">Constrain the ISO list for ClearHDR to the shipped steps that stay inside the sensor's gain bound: 200, 400, 640, 800 and 1200. ISO 100 sits under the floor and everything from 1600 up sits over the ceiling. Document that above roughly ISO 1585 the recording does not get brighter, only the preview does.</span></li>
+        <li><span class="id">4.4</span><span class="chip ok">confirmed</span><span class="body">Constrain the ISO list for ClearHDR to 200, 400, 640 and 800. At 1200 the merge has already begun to collapse and at 1600 it has lost about a stop and a half of highlight range, which is exactly what the mode was turned on to capture. <strong>This is now the main outstanding fix, and it is the only one left outside the preview code.</strong></span></li>
         <li><span class="id">4.5</span><span class="chip ok">confirmed</span><span class="body">Switch the thumbnail to JPEG. The camera currently seeds the full preview plane uncompressed, 2.7 MB on every frame, which is roughly a fifth of the file and the single largest lever on write throughput. The JPEG mode is already implemented and costs about 5 KB.</span></li>
         <li><span class="id">4.6</span><span class="chip probable">probable</span><span class="body">Record the analogue gain code with every ClearHDR take. Every plateau number in the project's history that lacks one is why the clamp model still has free hypotheses.</span></li>
       </ol>
@@ -474,7 +503,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
 </section>
 
 <section id="measure">
-  <div class="section-head"><span class="n">07</span><h2>What to measure, and what each outcome means</h2></div>
+  <div class="section-head"><span class="n">08</span><h2>What to measure, and what each outcome means</h2></div>
   <p class="col">In order. The first two gate the recommendation; the rest close the clamp model.</p>
   <ol class="qlist">
     <li><span class="q">Does a ten-minute 4K take at 25 fps sustain without dropping frames, in both depths?</span>
@@ -495,7 +524,7 @@ ol.plain li,ul.plain li{margin-bottom:.45em}
 </section>
 
 <section id="vendor">
-  <div class="section-head"><span class="n">08</span><h2>If a vendor recipe can be obtained</h2></div>
+  <div class="section-head"><span class="n">09</span><h2>If a vendor recipe can be obtained</h2></div>
   <p class="col">These are the questions whose answers would turn the experiments above into confirmations. Ask for register-level statements for the sensor in built-in combination mode, at both output depths.</p>
   <ol class="plain col">
     <li>The merge formula: how the combined output is formed from the two reads as a function of the thresholds, the blend weights and the gain adder, including where the black pedestal enters and what sets the ceiling.</li>

@@ -5,6 +5,27 @@ The reasoning behind it is in [`clearhdr12-recipe.html`](clearhdr12-recipe.html)
 history is in [`../lessons/hardware-log.md`](../lessons/hardware-log.md), entries 2026-09-06/07,
 2026-09-13 and 2026-09-14.
 
+## Status, 2026-09-14 night — mostly done
+
+Phases 1, 2 and 3 ran at the camera and the operator passed 12-bit ClearHDR. Read
+[`../lessons/hardware-log.md`](../lessons/hardware-log.md) from "the ClearHDR preview stage,
+measured at last" onward before acting on anything below: several of this brief's own
+prescriptions were measured wrong and are corrected there.
+
+- **Done:** the re-landed correction, per-frame timing instrumentation with a falsifiability
+  check, the cost cuts, and the detector fix that was the actual root cause — it compared the
+  darkest channel against the brightest, so a tungsten bulb that pins two channels read as
+  nothing clamped. Teaching it the same second-over-max rule the trigger already used took the
+  whitened area from 33.7% of the frame to 9.5%.
+- **Reverted deliberately:** the feathered matte. It worked as designed and that is why it
+  went: it made a symptom look solved while the anchor underneath it was wrong.
+- **Wrong in this brief:** phase 3's mean-then-blur ranks worse than erode-then-blur on real
+  takes, and phase 4's option A does not help, because the render is there for the compander
+  rather than the highlight and is 71% of the stage.
+- **Left to do, and it is not in cinepi-raw:** constrain the ClearHDR ISO list to 200-800 in
+  CineMate. Above that the sensor leaves its documented gain window, the merge collapses, and
+  the camera quietly stops being an HDR camera.
+
 ## The goal
 
 12-bit ClearHDR previews (HDMI, the MJPEG web view, and the embedded DNG thumbnail) render correctly
