@@ -2248,3 +2248,59 @@ periodic log line, the ratio/hole/island figures from `edge_probe.py` over the r
 and the pink-vs-neutral figures from rawpy renders against the embedded thumbnails. Operator
 confirmation of the *picture* is still outstanding: the before/after above is the agent's read
 of the thumbnails, not yet the operator's read of the live HDMI preview.
+
+## 2026-09-14 — where the 12-bit ClearHDR stage's 33ms actually goes: the render, not the correction
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD (`set resolution 3`), shutter 180° so the
+highlight actually clamps (peak raw code ~2438 against clip anchor 2344), ISO 3200, 25 fps,
+`cinepi-raw` `feature/clearhdr12-preview-clean` @ `b725144`. Four configurations, each a
+`ccmpPreview` entry in `/home/pi/post-processing0.json` and a session restart — **no rebuild
+between any of them**. Median read off the stage's own periodic timing line.
+
+**Worked — the decomposition, and the timer's own falsifiability check:**
+
+| config | median | delta | isolates |
+|---|---|---|---|
+| A — everything on, feathered | 34.7ms | — | as shipped |
+| B — `clipFeather 0` | 33.1ms | −1.6ms | the feathered matte |
+| C — B + `clipConvergence 0` | 26.4ms | −6.7ms | the convergence ratio rule |
+| D — C + `highlightRolloff 0` | **24.5ms** | −1.9ms | the anchor ramp |
+
+D also reports **`0 quads fully desaturated`** against A's 38.8M, so the correction really is
+inert there and the residual really is the bare render. **The whole correction — matte,
+convergence rule and anchor together — is 10.2ms. The render underneath it is 24.5ms, 71% of
+the stage.**
+
+This is also the check phase 2 required and had not yet had: the timing number moves by a
+sensible, predicted amount as each piece is switched off, and the desaturation counter falls
+to zero alongside it. A diagnostic that could not come out wrong was what shipped three bad
+anchors; this one can, and did.
+
+**Did not work — the task brief's phase 4 preference ordering.** It ranks option A first ("use
+the in-place correction on 12-bit instead of the full-frame render for the highlight defect...
+This removes the render from the highlight path entirely"), on the reasoning that the blown
+highlight is the same mechanism in both depths and the cheap 16-bit correction should serve it.
+The mechanism claim holds. The **cost** conclusion does not: the render is not there for the
+highlight, it is there for the **compander** — the mid-tone crush that only a re-render from
+raw can fix — so removing the highlight correction from it leaves the 24.5ms untouched. Option
+A saves some part of 10.2ms and lands near 28ms, still nearly 2x the 15ms budget.
+
+What the numbers actually point at:
+
+- **Option B (threading the render across row halves)** is the only one that attacks the
+  24.5ms. Split ideally it lands the stage near 17ms.
+- **Option C (a ClearHDR-only tuning file carrying black level 2455/3016)** removes the need
+  for the CPU render above the compander's second knee at no per-frame cost at all — but does
+  nothing below that knee and lifts the preview's black by 745 counts.
+- **No single option gets 12-bit under 15ms.**
+
+**Context worth keeping:** the frame period stayed locked at 40000us in *every* configuration,
+including the 34.7ms one and including the 47.8ms pre-pass version measured earlier the same
+night. The 15ms figure is a design budget, not a cliff — 25fps leaves 40ms, and the
+post-processor runs a detached thread per request, so the stage exceeding 15ms does not by
+itself drop a frame. What it eats is headroom the recorder needs under load, which is what the
+original 102-drops-in-20-minutes report was about and what a short take does not reproduce.
+
+**Confirmed by:** the agent driving the Pi through `cinemate_dev.py` on 2026-09-14 22:19-22:23;
+each configuration was a JSON edit plus a session restart, and `/home/pi/post-processing0.json`
+was restored to its original two-stage contents afterwards.
