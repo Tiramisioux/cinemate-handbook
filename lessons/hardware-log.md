@@ -2618,3 +2618,45 @@ frame's own measurement rather than from anything done to the preview's appearan
 by the stage's periodic log line across four builds, full-resolution preview frames pulled from
 port 8000, and 13/13 unit tests on the Pi at each build. New tests in `ccmp_preview_test.cpp`
 cover the tungsten two-channel clamp in both directions and fail against the old feed.
+
+## 2026-09-14 — can ClearHDR be used at high ISO? No, and the reason is structural
+
+**The question, from the operator, after a night of chasing preview artefacts that all turned
+out to be downstream of gain.** Answer, from the measurements in the entries above:
+
+**No. Above analogue gain code ~60 (ISO ~800 with the shipped +12 dB gain adder) ClearHDR
+returns less highlight range than SDR, while still charging the full price for it.**
+
+The mechanism, and why there is no setting that escapes it:
+
+1. ClearHDR's extra range is the HG/LG ratio, and that ratio IS `EXP_GAIN` (register 0x3081,
+   the `hdr_gain_adder` menu), +12 dB by default.
+2. `imx585.c` line 167 documents the sensor's constraint: `9.6dB ≤ GAIN + EXP_GAIN ≤ 29.1dB`
+   for built-in combination. With EXP_GAIN at +12 dB that caps analogue gain at 17.1 dB, i.e.
+   code 57 — about ISO 640-800.
+3. Measured ceiling against gain code, 12-bit HD, everything else fixed:
+
+   | gain code | 20 | 40 | 51 | 60 | 71 | 80 |
+   |---|---|---|---|---|---|---|
+   | ceiling (of 4095) | 4095 | 4095 | 4095 | 4095 | 3188 | 2408 |
+
+   At code 80 that is 59% of the container — roughly a stop and a half of highlight range
+   simply gone, and the lost region is exactly what ClearHDR was turned on to capture.
+4. **The obvious escape does not work.** Lowering `EXP_GAIN` to keep the sum inside the window
+   at high ISO was measured: adder 0 (+0 dB) at gain code 80 gives a ceiling of **1452**, worse
+   again — because removing EXP_GAIN removes the HG/LG ratio, and with no ratio there is no
+   HDR. Either the sum leaves the documented window and the merge collapses, or the ratio goes
+   to zero and there is nothing to merge.
+
+So high-ISO ClearHDR pays the compander, the full-frame CPU re-render, the clamp artefacts and
+the anchor problem, and hands back a smaller highlight range than the SDR mode would have. That
+is why the operator's own verdict on the same lamp was that the non-ClearHDR mode "looks nice".
+
+**Practical guidance:** ClearHDR at ISO 200-800. For more sensitivity use SDR, or add light,
+open up, or lengthen the shutter. **Product fix, still unwritten:** constrain the ISO list for
+ClearHDR modes in CineMate (recipe recommendation 4.4), which now has a measured breakpoint
+rather than an inferred one — and prefer a constraint to a warning, because nothing in the
+preview tells an operator that the mode has quietly stopped being an HDR mode.
+
+**Confirmed by:** the gain and adder sweeps of 2026-09-14 with `ANALOG_GAIN=` journal
+confirmation on every step, and the driver's own constraint comment.
