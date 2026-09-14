@@ -2611,7 +2611,10 @@ been pointed at a **tungsten lamp**, which clamps two and was invisible to the o
 16-bit's remaining jagged boundary at these ISOs is the merge-collapse operating point, not the
 anchor — peak raw code reads exactly 35968, the ceiling.
 
-**Confirmed by:** the stage's periodic log line across four builds, full-resolution preview
-frames pulled from port 8000, and 13/13 unit tests on the Pi at each build. New tests in
-`ccmp_preview_test.cpp` cover the tungsten two-channel clamp in both directions and fail
-against the old feed.
+**Confirmed by:** THE OPERATOR, on the live preview, after the second build — "lastly, 12 bit
+hdr looked good! in the last run". That is the first unqualified pass any ClearHDR mode has had
+from the camera operator in this investigation, and it came from moving the anchor onto the
+frame's own measurement rather than from anything done to the preview's appearance. Supported
+by the stage's periodic log line across four builds, full-resolution preview frames pulled from
+port 8000, and 13/13 unit tests on the Pi at each build. New tests in `ccmp_preview_test.cpp`
+cover the tungsten two-channel clamp in both directions and fail against the old feed.
