@@ -2660,3 +2660,43 @@ preview tells an operator that the mode has quietly stopped being an HDR mode.
 
 **Confirmed by:** the gain and adder sweeps of 2026-09-14 with `ANALOG_GAIN=` journal
 confirmation on every step, and the driver's own constraint comment.
+
+## 2026-09-14 — ClearHDR's ISO cap lands on 799, and the operator found the off-by-one-step
+
+**Tested:** the CineMate-side constraint on `feature/clearhdr12-preview-clean`, deployed to the
+Pi and exercised live through the helper session.
+
+**Worked:** `set iso 800` -> Redis reads **799**; `set iso 3200` -> **799**; `set iso 400` ->
+400 untouched; and the log says why ("ISO 3200 is above ClearHDR's usable ceiling; holding at
+799..."). In an SDR mode nothing is capped at all.
+
+**The number came from the operator, and the sweep backs it.** The first implementation capped
+at 800. Measured on the rig with the driver's own `ANALOG_GAIN=` lines:
+
+| ISO | 640 | 700 | 799 | 800 | 900 | 1000 |
+|---|---|---|---|---|---|---|
+| gain code | 51 | 56 | 56 | **60** | 63 | 66 |
+
+`imx585.c` line 167 documents `9.6dB <= GAIN + EXP_GAIN <= 29.1dB` for built-in combination,
+capping analogue gain at code 57 with the ClearHDR default EXP_GAIN of +12 dB. **ISO 799 is the
+last value inside that window; 800 is the first outside it.** 800 was one gain step too
+generous.
+
+**A design note worth keeping.** The first version simply withheld every step above the cap,
+which stranded ClearHDR at ISO 640 and threw away a third of a stop the sensor can actually
+deliver (700-799 all sit on code 56). The operator's call was to keep the 800 step selectable
+and land it on 799, shown **green** — reusing the tint both GUIs already use for a
+shutter angle that sync mode is driving. That is the better shape: the control stays where the
+operator expects it, and the colour says "the camera is holding this", which is exactly what is
+happening. Steps beyond the first (1200 and up) stay dropped, being genuinely out of reach.
+
+**A near miss worth recording.** Switching the Pi's `cinemate` to the feature branch hit a stash
+conflict on the operator's own `settings.jsonc` and left conflict markers in it — the camera's
+live config, briefly unparseable. Recovered from a copy taken immediately before the switch, and
+verified byte-identical afterwards. **Copy that file before any branch switch on the Pi; the
+stash dance alone is not enough**, because the branch itself modifies it. The code defaults the
+new key when it is absent (there is a test for exactly that), so the operator's file never needs
+to carry it.
+
+**Confirmed by:** live `set iso` round trips against Redis on 2026-09-14, the gain sweep above,
+and the cinemate suite at 1187 passed / 1399 subtests.
