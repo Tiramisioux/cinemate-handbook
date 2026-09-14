@@ -36,6 +36,7 @@ a future session of you with no memory of this one.
 | Detect or report what is attached to the I²C bus | [`working/probing-i2c-peripherals.md`](working/probing-i2c-peripherals.md) |
 | Commit an image, stream the log, or write a text-scraping guard | [`working/repository-and-tooling-traps.md`](working/repository-and-tooling-traps.md) |
 | Run or add tests, understand what needs a Pi | [`working/testing.md`](working/testing.md) |
+| Work on ClearHDR: why the preview goes pink, what to change, what is still unknown | [`working/clearhdr12-recipe.html`](working/clearhdr12-recipe.html) (open in a browser), with the probes beside it |
 | Run a deterministic hardware verification session | [`working/hardware-session.md`](working/hardware-session.md) |
 | Understand how cinemate boots and threads | [`architecture/cinemate.md`](architecture/cinemate.md) |
 | Understand cinepi-raw's capture loop and DNG/audio pipeline | [`architecture/cinepi-raw.md`](architecture/cinepi-raw.md) |
