@@ -2565,3 +2565,53 @@ is a prediction and needs a take.
 **Confirmed by:** the three-state comparison above with full-resolution preview frames pulled
 from port 8000, the operator watching live ("now it is smooth but pink" for the third state),
 and the source of `clip_plateau.hpp` at `230f55e`.
+
+## 2026-09-14 — 12-bit finally anchors on its own measurement: a third of the frame whitened becomes a tenth
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD and 16-bit ClearHDR HD, tungsten lamp, ISO 800
+and 1600, shutter 180°, `cinepi-raw` `feature/clearhdr12-preview-clean` at `f0c5153` then
+`4143647`. Each build deployed and read off the stage's own periodic log line.
+
+**Worked — the 12-bit path, at ISO 800:**
+
+| | anchor | whitened | isolated | 
+|---|---|---|---|
+| table constant (before) | 2344 | **33.7% of frame** | 120 |
+| measured per frame (after) | **2609** (floor 2652, peak 2688) | **9.5% of frame** | 48 |
+
+The anchor now lands just under the frame's own peak instead of at a constant measured under
+quite different conditions, so the correction covers the bulb and stops eating the shade. The
+big white blob is gone, the lamp shade keeps its gradation, and most of the boundary is a clean
+circle; a patch of speckle remains in the glare next to the fitting.
+
+**Did not work first time, and the log line caught it in one build.** The first version changed
+the statistic (second-over-max on folded colour channels) but left the detector's gates where
+they were — 0.25 of full scale and a ratio of 0.9, which were calibrated for the OLD
+min-over-max test against a blown sky. Against second-over-max those are far too loose: a
+tungsten shade sits at second-over-max p50 0.958 / p95 0.978, so the shade itself read as a
+plateau. Measured on the camera: **anchor 1013 against a real clamp near 2600, and 79M quads
+whitened per 120 frames** against the table anchor's 37M. Tightening the gates to
+clip_convergence.hpp's own level_lo 0.40 and ratio_lo 0.98 fixed it. The detector and the
+trigger now ask the same question with the same numbers.
+
+**16-bit: inert, as predicted.** The prediction written before the test was that a blown sky
+clamps all three channels so min, second and max coincide and the change should not move the
+16-bit anchor. On the lamp it holds anyway: anchor 35429 and plateau floor 35968 before and
+after, whitened 38.9% -> 39.0%, roughness 2.70 -> 2.68. The detector does now see far more
+converged quads (72k -> 105k at ISO 800, 292k at ISO 1600) because it catches the two-channel
+clamps it used to discard, but the percentile lands in the same bin.
+
+**An operator-reported regression that was not one.** "16 bit above 800 iso... it worked before
+this feature branch" was tested directly by building phase 1 (`ea0077e`) and the branch tip
+(`230f55e`) on the Pi and shooting the same frame: white 351,753 vs 351,403, isolated 99 vs 89,
+roughness 2.65 vs 2.70 — identical within noise, same anchor, same plateau, same converged
+count. The branch did not regress it. What changed is the SUBJECT: 16-bit was confirmed good on
+a blown **sky**, where three channels clamp together and the detector sees it; it had never
+been pointed at a **tungsten lamp**, which clamps two and was invisible to the old detector.
+16-bit's remaining jagged boundary at these ISOs is the merge-collapse operating point, not the
+anchor — peak raw code reads exactly 35968, the ceiling.
+
+**Confirmed by:** the stage's periodic log line across four builds, full-resolution preview
+frames pulled from port 8000, and 13/13 unit tests on the Pi at each build. New tests in
+`ccmp_preview_test.cpp` cover the tungsten two-channel clamp in both directions and fail
+against the old feed.
