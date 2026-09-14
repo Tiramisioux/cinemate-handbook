@@ -2152,3 +2152,99 @@ now ok in 16 bit modes", then "pink is gone in both 12 bit modes", then the boun
 plus a live MJPEG frame pulled from the rig at 03:10 showing a neutral core with a ragged
 edge, against `auto floor 2952, would anchor 2908, clip anchor 2900` in the same moment. The
 ratio table is measured from the three DNGs with rawpy, per region.
+
+## 2026-09-14 — the ClearHDR preview stage, measured at last: 31ms, and the edge fix the synthetic model ranked wrong
+
+**Tested:** imx585 colour, all four ClearHDR modes, `cinepi-raw`
+`feature/clearhdr12-preview-clean` (`2f9ac51` → `28d5682` → `b725144`, i.e. phase 1's
+re-landed fix plus phase 2 cost work and phase 3's matte), cinemate `dev`, ISO 3200
+(analogue gain code 80), `cg_rb=1.8,1.7`, 25 fps, `hdr_blend=5`, `hdr_gain_adder=1`.
+Subject: a tungsten lamp with a yellow shade. Takes at 96° and 180° shutter; reference set
+kept at `~/Downloads/clearhdr12-preview-clean-refs/`.
+
+**Worked:**
+
+1. **The stage's cost is now a number on the log line**, per frame, beside the frame period
+   taken from consecutive `SensorTimestamp`s. Measured, on the same scene at 180°:
+
+   | mode | path | median | max |
+   |---|---|---|---|
+   | 12-bit 4K | full re-render | 35.2ms | 45.1ms |
+   | 12-bit HD | full re-render | 32.9ms | 34.0ms |
+   | 16-bit 4K | in-place | 21.9ms | 27.7ms |
+   | 16-bit HD | in-place | 18.8ms | 23.5ms |
+
+   Against a 15ms budget and a 40ms frame period: **every frame of every window is over
+   budget in all four modes**, and 12-bit 4K's maximum exceeds the frame period outright.
+   Nobody had ever measured this; the reverted branch was reverted on a dropped-frame count
+   with no idea which part cost what. The in-place path is ~40% cheaper than the full
+   re-render on identical content, which is the first direct evidence for phase 4 option A.
+
+2. **The ragged 12-bit boundary is fixed**, and visibly so — the confetti of isolated white
+   quads scattered into the yellow, and the yellow holes punched into the white, are both
+   gone; the boundary reads as an edge. Core still fully white, shade still fully yellow.
+
+3. **The preview-only invariant holds, measured rather than asserted.** Same frame, blown
+   core: recorded DNG developed in rawpy reads RGB (255, 166, 255) — pink; the embedded
+   thumbnail reads (254, 254, 254) — neutral. The yellow shade reads (225, 145, 0) against
+   (227, 153, 1), i.e. untouched in both.
+
+**Did not work:**
+
+- **The task brief's prescribed matte.** It specifies replacing the per-block minimum with a
+  mean and blurring that. On synthetic data that ranks best (0 holes / 0 islands against
+  min+blur's 81/16) — which is where the prescription came from. On the real takes the
+  ranking **inverts**:
+
+  | 12-bit HD, frame 40 | holes | islands | surround desaturated |
+  |---|---|---|---|
+  | shipped: 2x2 min | 143 | 59 | 0.0% |
+  | 2x2 mean + 3x3 box | 8 | 1 | **25.7%** |
+  | 2x2 min + 3x3 box | 3 | 1 | **4.6%** |
+  | ratio_lo-0.02, mean + box | 3 | 1 | **67.9%** |
+
+  The mean lets one fired quad drag a block the erosion would have rejected — the exact
+  property "one pixel is never a clamp" exists to deny — and the blur then spreads it. Keeping
+  the erosion and adding the blur gets the same or better artefact counts for a sixth of the
+  collateral damage. Widening the ratio ramp is worse again and buys nothing.
+
+- **The exact two-pass matte, in 12-bit.** Measured +1.0ms in 16-bit (its second pass touches
+  no raw) and **+14.9ms in 12-bit** (32.9 → 47.8ms), because its pre-pass re-reads the raw and
+  re-runs the decompand — putting the stage above the 40ms frame period. Replaced in 12-bit by
+  applying the previous frame's blurred matte, which costs **+1.7ms** (32.9 → 34.6ms) because
+  the trigger was already being computed in that pass. 16-bit keeps the exact, latency-free
+  version.
+
+- **A 96° take in 12-bit HD proves nothing.** Its highlight peaked at raw code 2120 against a
+  clip anchor of 2344 — it never reached the merge clamp, the correction never fired, and the
+  clean white core in that take is the ISP's own render. ISO cannot fix this: above ~ISO 1585
+  every step maps to gain code 80, so it brightens only the preview. 180° took the peak to
+  2441 and it clamped. **Check `peak raw code` against `clip anchor` before trusting a
+  ClearHDR take as evidence.**
+
+**Why the binned mode's edge is the worst one — an open hypothesis, now measured.** The
+2026-09-14 entry above guessed that coarse companding makes exact channel ties common in HD.
+Half right: the binned mode's yellow surround sits at 2nd/max p95 **0.978** against 4K's
+**0.966**, so binning does push a real yellow closer to the trigger — but the transition
+band's top two channels are on the identical code in **0.0%** of quads (median separation
+208-216 codes in 4K, 160 in HD). They are near-equal, never tied, so a tolerance in code space
+cannot separate them and feathering is the only tool that works. This was the question the
+brief said to answer before building anything, and it came out as predicted.
+
+**The reference takes this was all built on no longer exist.** All three named in
+`development/clearhdr12-preview-edge/HANDOFF-RESEARCH.md` are gone from `~/Downloads` *and*
+from `/media/RAW` (3% used — that drive was cleared). The consequence is concrete: the brief's
+own validation gate for `edge_probe.py` — reproduce isolated-pixel counts of 245 and 498 on the
+two 16-bit takes — **can never be run**, so the probe's absolute numbers are probable rather
+than confirmed. Its Q3 rankings are confirmed, because the synthetic self-check reproduces the
+documented 321/88 → 0/0 exactly. Independent corroboration did turn up: the brief records the
+orange surround at 0.912, and these takes measure 0.9129 / 0.9136 / 0.9132 across three frames
+of a different take eight days later. **Keep reference takes in `~/Downloads/<feature>-refs/`;
+`/media/RAW` is not an archive.**
+
+**Confirmed by:** measurements taken by the agent driving the Pi directly through
+`cinemate_dev.py` on 2026-09-14 22:00-22:15 — the timing figures are from the stage's own
+periodic log line, the ratio/hole/island figures from `edge_probe.py` over the recorded DNGs,
+and the pink-vs-neutral figures from rawpy renders against the embedded thumbnails. Operator
+confirmation of the *picture* is still outstanding: the before/after above is the agent's read
+of the thumbnails, not yet the operator's read of the live HDMI preview.
