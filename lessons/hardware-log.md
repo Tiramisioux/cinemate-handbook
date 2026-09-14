@@ -2352,3 +2352,59 @@ judging preview quality; the DNG thumbnail is half-res and will flatter you.**
 **Confirmed by:** the operator's report against the live HDMI/MJPEG preview on 2026-09-14
 ~22:26, then the agent's full-resolution A/B at 22:28-22:35. Still outstanding: the operator's
 own look at the 7x7 result.
+
+## 2026-09-14 — the merge ceiling is hard at ~0.55 of the container, and no exposed control moves it
+
+**Tested:** imx585 colour, 12-bit ClearHDR HD (`set resolution 3`) and 16-bit ClearHDR HD
+(mode 5), tungsten lamp, shutter 180° so the merge clamps, `cinepi-raw`
+`feature/clearhdr12-preview-clean` @ `5f4477c`. Every ClearHDR control the CLI exposes, swept
+live while watching `auto floor` / `peak raw code` on the stage's own log line.
+
+**Did not work — every control that was supposed to move the ceiling:**
+
+| swept | values | plateau (12-bit HD) |
+|---|---|---|
+| analogue gain (via ISO) | code 80, 71, 60 | 35968 in 16-bit, **unchanged at every gain** |
+| `hdr_gain_adder` | 0 | 1452 |
+| `hdr_gain_adder` | **1, 2, 3** | **2412, 2412, 2412 — saturated** |
+| `hdr_threshold_low` | 4095, 3000, 2000, 1000 | 2412 at every value |
+| `hdr_threshold_high` | 0, 1000, 2500, 4095 | 2412 at every value |
+
+So the gain adder moves the ceiling once, from 1452 to 2412 between adder 0 and 1, and then
+stops. Nothing else moves it at all. **The merge output in the binned mode is pinned at raw
+code 2412 of 4095 — 0.589 of the container — and ~41% of the range is unreachable.**
+
+**Two modes agree, through different encodings.** Decompanding 12-bit code 2412 through the
+project's own curve (knees 500/11500, slopes 1/64 and 1/16, pedestal 200) gives linear ≈36,140.
+The 16-bit binned mode measures its plateau directly at **35,968**. Those are the same physical
+ceiling to within 0.5%, seen once through the compander and once without it. Full res sits
+higher: 16-bit 4K plateaus at 47,808-49,245, i.e. ~0.73-0.75, a ratio to the binned ceiling of
+about 4/3.
+
+**This contradicts the model the whole clamp investigation rests on.** The 2026-09-13 and
+2026-09-14 entries state the clamp "moves with analogue gain" on the strength of two full-res
+4K takes (54100 at code 71, 48600 at code 80), and `clip_plateau.hpp` exists to measure it per
+frame for exactly that reason. In the **binned** modes it does not move with gain at all —
+three gain codes, one plateau, to the last digit. Either full res and binned differ in kind, or
+something other than analogue gain differed between those two 4K takes. **The measurement that
+settles it is a gain sweep at full res**, which this session did not run.
+
+**Why this matters more than the preview work.** The stage can only choose what colour to paint
+a plateau; it cannot put roll-off into a signal that has none. Everything the ClearHDR preview
+work has done — neutralising the cast, eroding speckle, feathering the boundary — is cosmetics
+over a sensor-side limit: the merge stops at 55-59% of the container in the binned modes, so
+every highlight above that light level lands on the same flat code and renders as a
+featureless blob however it is coloured. The operator's judgement, on seeing a correctly
+feathered result, was "it looks feathered but this is not fixing the root cause", and the
+numbers above say they are right.
+
+This also puts a number on the recipe's #1 open vendor question ("what sets the ceiling"): not
+analogue gain, not the thresholds, and only the first step of the gain adder. The remaining
+candidates are the ClearHDR-only registers no public driver names, and the LG read's own
+saturation times a fixed alignment factor.
+
+**Confirmed by:** live sweeps through `cinemate_dev.py` on 2026-09-14 22:40-22:55, each value
+given ~11s to settle and read off two consecutive periodic log lines; `ANALOG_GAIN=80/71/60`
+confirmed in the journal, so the gain writes did reach the sensor rather than being silently
+dropped. All settings restored afterwards (blend 5, adder 1, thresholds unset, ISO 3200,
+shutter 96°, mode 3).
