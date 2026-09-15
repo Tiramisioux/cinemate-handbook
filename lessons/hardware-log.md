@@ -3007,3 +3007,57 @@ histogram.
 
 **Confirmed by:** operator ("hd works") plus journal lines quoted above and direct RGB
 measurement of the port-8000 preview before and after, this session.
+
+## 2026-09-15 — a release-image script died on `cp -a` because /media/RAW has no ownership
+
+**Tested:** `scripts/make-release-image.sh --dry-run` on cinepi, new in `cinemate` `dev`
+(b8e8f33f, then 9b9ced51). The script brackets the documented `dd` → PiShrink → `xz` with a
+swap of `settings.jsonc` and `/boot/firmware/config.txt` to their stock values, so a
+distributable image does not ship one operator's sensor/hotspot/GPIO setup. `--dry-run` runs
+the whole bracket and skips only the imaging.
+
+**Did not work (first attempt, b8e8f33f):** it aborted at step 2 of 4, before a single byte was
+imaged:
+
+```
+cp: failed to preserve ownership for '/media/RAW/.cinemate-release-image/config.txt':
+    Operation not permitted
+[release-image] ERROR: line 305 while running: cp -a "$BOOT_CONFIG" "$RI_STASH_DIR/config.txt"
+```
+
+**Why:** the script stashes the operator's two files on the destination volume deliberately —
+`/media/RAW` is the SSD, not the card being imaged, so the stash survives a reboot and cannot
+ship inside the release. But that volume has no ownership model, so `cp -a`'s chown fails
+outright. The filesystem type was not captured; the behaviour is exFAT/NTFS-shaped and the
+*inference* that it is exFAT is unconfirmed. What is confirmed is the property that matters:
+**`/media/RAW` does not accept `cp -a`.**
+
+**A second instance the Pi had not reached.** The desk-side test written for the fix found that
+`configure_boot_config()` calls the installer's `backup_file()`, which is another `cp -a`, and
+its `BACKUP_DIR` was pointed at the same volume. Hardware would have hit it one step later.
+Worth recording as a pattern: *this failure has as many instances as there are `cp -a`s aimed
+at that volume*, and fixing the one in the traceback would have produced a second identical
+session.
+
+**Worked (9b9ced51):** the bracket completed end to end — stash, swap to stock
+`settings.jsonc` and a generated stock `config.txt`, manifest, restore of both files, stash
+removed. Total under a second.
+
+**The fix, and why the shape matters:** preserving attributes on the *stash copy* was never the
+point; what has to survive is the attributes of the **originals**. Those are now read with
+`stat`, recorded in `state.env`, and reapplied with `install` on the way back. This also
+removed a hardcoded assumption that `config.txt` is 644 root:root and `settings.jsonc` is
+644 pi:pi.
+
+**That shape turned out to be load-bearing for a second FAT volume.** `/boot/firmware` is also
+FAT, so restoring `config.txt` runs chown/chmod on a filesystem with no real ownership. It
+succeeded — predicted in advance, on the reasoning that FAT accepts a chown/chmod which
+changes nothing, and the values being written back were read from that same file moments
+earlier. Hardcoding 644 root:root would have been a coin toss against the mount's `uid`/`gid`
+options; reading and reapplying is correct on FAT *because* it is a no-op there.
+
+**Not tested, still open:** `dd`, PiShrink, `xz`, and whether the resulting image boots. A
+`--dry-run` says nothing about any of them.
+
+**Confirmed by:** operator, two pasted terminal sessions this session — the `cp -a` abort at
+b8e8f33f and the clean 4/4 run at 9b9ced51.
