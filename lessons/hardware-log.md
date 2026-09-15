@@ -3061,3 +3061,68 @@ options; reading and reapplying is correct on FAT *because* it is a no-op there.
 
 **Confirmed by:** operator, two pasted terminal sessions this session — the `cp -a` abort at
 b8e8f33f and the clean 4/4 run at 9b9ced51.
+
+## 2026-09-15 — "cannot select 16-bit 4K" was the RP1 overclock guard, not the camera
+
+**Tested:** cinepi-raw `dca6748`, cinemate `dev` `9b9ced5`, imx585. Symptom: mode 6
+(3840×2200 16-bit ClearHDR) could not be selected — the GUI request was recorded
+(`dynamic_resolution_desired_mode = 6`) and the camera silently stayed on another mode. Worked
+the previous day, unchanged.
+
+**Worked:** `sudo reboot`. Confirmed by the operator.
+
+**Did not work / the red herrings:** three of them, and each cost time.
+
+- The journal's loudest warning, `No sensor subdev accepted wide_dynamic_range (imx585
+  ClearHDR) ... Device or resource busy`, firing every ~5 s, was **noise**.
+  `v4l2-ctl --get-ctrl wide_dynamic_range` returned **1** — the control was already correct.
+  The write fails with EBUSY only because cinepi-raw holds the subdev while streaming, which
+  `_set_wide_dynamic_range()`'s own docstring already describes. A warning that fires on every
+  resolution change while the state is right is indistinguishable from one that matters.
+- A preview showing 73.6% of frame at full white looked like a bug and was the operator
+  pointing the camera at a lamp. Ask before diagnosing the picture.
+- The mode table read three different ceilings for the same mode at the same moment:
+  `cinepi-raw --list-cameras` said **30 fps**, cinemate's GUI table said **21**, and Redis
+  `fps_max` said **60**. Only the middle one governs selection.
+
+**Why:** `rp1_regime.py` decides the pixel-rate ceiling — 380 MPix/s stock, 580 with the
+`rp1-overclock` overlay — and it decides it from **`config.txt`'s mtime against boot time**,
+not from any live reading. Its own comments say why: on kernel 6.12.93 `clk_sys` measures
+~333 MHz in *both* regimes, so it can no longer discriminate, and the veto that used to rely
+on it was removed. The remaining rule is that a `config.txt` modified at or after boot cannot
+have been acted on yet, so the overlay must be assumed inactive.
+
+Something rewrote `config.txt` at **20:45:30**, seven minutes after the **20:38:01** boot. The
+ceiling therefore dropped to 380 MPix/s, which caps 3840×2200 16-bit at **21 fps** — and with
+the camera at **25 fps**, the mode became unreachable and selection fell back. It worked the
+day before because the board had booted with that file already settled.
+
+The direction of the error is deliberate and correct: handing 580 to a board actually running
+stock "silently corrupts wide modes", so ambiguity fails toward stock.
+
+**The sharp edge worth knowing:** the guard is mtime-only, so **touching the RP1 overclock
+toggle in the settings editor downgrades the camera's fps ceiling until the next reboot, even
+when it does not change the file's content.** The toggle writes `config.txt` and restarts
+cinemate without rebooting the board. The consequence — wide modes quietly vanishing from the
+resolution list — appears nowhere in the GUI, only as one line in the journal. A candidate
+improvement: surface "overclock pending reboot" in the GUI next to the toggle, since the
+journal is not where an operator looks when a mode stops being selectable.
+
+**Confirmed by:** operator ("ok, solved") after `sudo reboot`; `rp1_regime` warning quoted
+from the journal with both timestamps; `config.txt` mtime and `uptime -s` read directly.
+
+**Still open, and NOT explained by this:** the 4K 16-bit frame drops from the 20:22 session
+(208 events, `FPS measured 6.25/8.33/12.5` against 25). `rp1_regime` did **not** warn in that
+boot, so the ceiling was not stale then. Two cinepi-raw changes made in response
+(`ea53b2c` correcting 16-bit highlights in place rather than re-rendering, `dca6748` dropping
+a latched ceiling when data reaches full scale) have never had a clean hardware test — the
+one cost reading taken, 8.2 ms/frame, was measured while the stale-ceiling bug was tripping
+the correction on nearly every pixel, so it says nothing about the corrected path.
+`milestone-clearhdr-whitelevel-2026-09-15` therefore still points at `f435514`, deliberately.
+
+**A method note, since it cost the most time here.** The drops were attributed to the
+measurement pass on the strength of a plausible mechanism — cost scaling 4× with resolution,
+cache-hostile histogram writes — and a fix was built and shipped before anything was timed.
+The measurement then read **0.38 ms/frame**: about 1% of the frame budget, and never the
+cause. The instrumentation that settled it took ten minutes and should have come first. A
+story that explains the evidence is not evidence.
