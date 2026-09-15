@@ -28,6 +28,11 @@ git fetch origin dev
 git checkout -b feature/clearhdr-iso-799 origin/dev
 ```
 
+`dev` moved on 2026-09-15 (`5bc2b28`, `0bb47e6`): the ISO cap docs were restructured, the
+12-bit ClearHDR material was removed from the manual, and binned 16-bit ClearHDR became opt-in
+behind `imx585_clear_hdr_16bit_hd`. Branch off the current `dev`, not off anything cached, and
+re-read `docs/clear-hdr.md` before editing it — the Docs section below reflects the new shape.
+
 No `cinepi-raw`, no libcamera, no driver change. If you conclude you need one, stop and say why
 before writing anything.
 
@@ -170,15 +175,22 @@ Match that. A sentence each, not a paragraph:
 
 | File | What changes |
 |---|---|
-| `docs/clear-hdr.md` (bullet at line 6) | 1585 → 799, and say the steps above it are not offered. Keep the 1585 gain-code-80 fact as the secondary limit, in fewer words than it has now. |
-| `docs/settings-json.md` (the `image_capture.hdr.iso_max` row, line 541) | Currently a wall. Cut it to: default `799`, ClearHDR only, `null` lifts it, the 800 step is kept and lands on 799 in green, above that is not offered. |
-| `settings.jsonc` + `resources/settings/settings_default.jsonc` | The comment block above `iso_max` (lines ~278-291) carries the 1585 reasoning. Replace with the 799 reasoning, same length or shorter. |
+| `docs/clear-hdr.md` | The cap now has **its own section**, `## ISO is capped at 1585` (line 15), plus a bullet at line 6 that cross-links to it. The heading, its anchor `#iso-is-capped-at-1585`, and that link all carry the number — change all three together or the link breaks. Its gain-code table lists 800/1600/2500/3200; it needs the 640/700/799/800 sweep instead. |
+| `docs/settings-json.md` (the `image_capture.hdr.iso_max` row, line 539) | Currently a wall. Cut it to: default `799`, ClearHDR only, `null` lifts it, the 800 step is kept and lands on 799 in green, above that is not offered. |
+| `settings.jsonc` + `resources/settings/settings_default.jsonc` | The comment block above `iso_max` (now line 298) carries the 1585 reasoning. Replace with the 799 reasoning, same length or shorter. |
 | `settings.schema.json` | The `iso_max` description and any default. |
 | `docs/changelog.md` | One line. |
-| `resources/gui-text/` | Check whether any card mentions the ISO cap; `tools/gui_text_check.py` is the contract-drift check for these. |
+| `resources/gui-text/05-settings-exposure-and-steps.md` | Check whether any card mentions the ISO cap; `tools/gui_text_check.py` is the contract-drift check for these. |
 
-The 12-bit ISO/gain-code table already in `docs/clear-hdr.md` has a 799 column and is correct —
-leave it alone.
+**The new docs section already claims the behaviour this task has to build.**
+`docs/clear-hdr.md` line 17 reads "In a ClearHDR mode CineMate stops offering ISO above
+**1585**." It does not. It stops *accepting* above 1585 and goes on offering 1200, 1600, 2500
+and 3200 in every list. Do not treat that sentence as evidence the surfaces are already
+handled — it is the sentence this task makes true.
+
+The 12-bit ISO/gain-code table that used to sit in `docs/clear-hdr.md` (the one with the 799
+column) was removed with the rest of the 12-bit material in `5bc2b28`. The 799 sweep now lives
+only in this brief and in the handbook's hardware log — carry it into the docs yourself.
 
 ## Tests
 
