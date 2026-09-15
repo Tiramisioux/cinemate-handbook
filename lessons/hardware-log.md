@@ -3111,14 +3111,25 @@ journal is not where an operator looks when a mode stops being selectable.
 **Confirmed by:** operator ("ok, solved") after `sudo reboot`; `rp1_regime` warning quoted
 from the journal with both timestamps; `config.txt` mtime and `uptime -s` read directly.
 
-**Still open, and NOT explained by this:** the 4K 16-bit frame drops from the 20:22 session
-(208 events, `FPS measured 6.25/8.33/12.5` against 25). `rp1_regime` did **not** warn in that
-boot, so the ceiling was not stale then. Two cinepi-raw changes made in response
-(`ea53b2c` correcting 16-bit highlights in place rather than re-rendering, `dca6748` dropping
-a latched ceiling when data reaches full scale) have never had a clean hardware test — the
-one cost reading taken, 8.2 ms/frame, was measured while the stale-ceiling bug was tripping
-the correction on nearly every pixel, so it says nothing about the corrected path.
-`milestone-clearhdr-whitelevel-2026-09-15` therefore still points at `f435514`, deliberately.
+**The 4K 16-bit frame drops are also resolved** — operator-confirmed in the same sitting. They
+were tracked separately because `rp1_regime` did not warn in the 20:22 boot, so the stale
+ceiling was not their cause. What cleared them is the pair of cinepi-raw changes made in
+response:
+
+  - `ea53b2c` — 16-bit stops re-rendering the frame. The ISP's render of linear data is
+    already correct except for clamped highlights, so the stage now corrects those in place
+    and leaves the rest untouched, instead of rebuilding all 8.4M samples in software on top
+    of the hardware render. Two renders per frame was one too many, and that was the
+    regression `f435514` introduced by admitting 16-bit to a stage built for 12-bit.
+  - `dca6748` — a latched ceiling is dropped when the detector refuses with "data reaches full
+    scale". Every other refusal means this frame had nothing to measure and the previous
+    answer still stands; that one means the data is no longer clamped at all, and keeping a
+    ceiling measured when it was makes the stage whiten pixels that never clipped.
+
+12-bit still renders twice, which it has done since `3a39306` created the stage and which is
+unavoidable there — the ISP read companded codes as linear, so none of its output is worth
+keeping. It is affordable rather than justified, and it survives on a thinner margin than is
+comfortable. Worth revisiting.
 
 **A method note, since it cost the most time here.** The drops were attributed to the
 measurement pass on the strength of a plausible mechanism — cost scaling 4× with resolution,
