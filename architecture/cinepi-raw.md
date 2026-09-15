@@ -59,6 +59,62 @@ cached mental model of its internals; read the current file if you're changing p
 or metadata behavior. See [`../working/testing.md`](../working/testing.md) for what part of
 this *is* unit-testable (the packing helpers) and what genuinely needs a live take.
 
+## Output depth: why the sensor mode, not the pixel format, decides it
+
+The single most misleading thing about the DNG writer is that **the Bayer
+format's own bit count does not tell you how many bits are real.** On a Pi 5,
+libcamera's PiSP pipeline handler cannot emit a raw stream in anything but an
+unpacked 16-bit container — *"We cannot output CSI2 packed or non 16-bit output
+from the frontend"* (`pipeline/rpi/pisp/pisp.cpp`) — so a 10-bit mode, a 12-bit
+mode and a genuine 16-bit ClearHDR mode all arrive as `SRGGB16`. The sensor
+mode's depth is the only thing left that says how many of those bits carry
+signal, and the significant bits are **MSB-aligned**, so the container must be
+shifted down by `container - sensor_depth` before packing.
+
+On a Pi 4 / VC4 none of this applies: rows arrive at their native depth
+(`SBGGR10`/`12` and their `_CSI2P` forms), already right-justified or
+CSI2-packed, and must be left alone. That is why the rule tests `bf.bits == 16`
+rather than treating it as a given.
+
+`cinepi/dng_output_depth.hpp`'s `resolve_dng_output_depth()` is the whole rule,
+pulled out as pure logic so the truth table over
+`(container, sensor depth, trusted, packed, compressed)` can be tested without
+a live `Camera` — the same split, for the same reason, as `ccmp_gate.hpp`. It
+is the **single writer** of `dng_info.bits`/`white` on the linear path; the
+CCMP decompand and CineMate Log override afterwards, in that order, and the log
+path clears both pack flags outright because `log_lut_` owns the row
+conversion. `tests/dng_output_depth_test.cpp` pins it.
+
+Three properties of the rule are load-bearing:
+
+- **The asymmetry.** Packing down further than the data justifies destroys real
+  bits; packing down less just stores known-zero padding. Every guard fails
+  toward the larger file, and an unrecognised depth (0, 8, 14, or anything a
+  stray Redis write leaves behind) packs at 12 exactly as it always has rather
+  than being derived into an untested file.
+- **COMP1 keeps the 12-bit flag.** `dng_save()` dispatches on
+  `bayer_format.compressed` *before* either pack flag, and its compressed
+  branch reads the 12-bit flag to choose packed-12 over a 2 B/px verbatim
+  write. Clearing it there would silently turn every COMP1 take into a 16-bit
+  file. 10-bit is excluded from COMP1 instead — deliberately, because COMP1's
+  dequantisation emits non-multiples of 64 in three of its four quantisation
+  modes, so a 10-bit repack would discard detail a 12-bit one keeps, and that
+  trade has never been measured. Reachable on imx519, which cinemate launches
+  with packing `P` on Pi 5.
+- **Everything downstream is already depth-generic.** Tag 258, `WhiteLevel`,
+  `StripByteCounts`, the buffer sizing, the RAM pool and the per-channel black
+  rescale all derive from `dng_info.bits` — which is why adding a depth is a
+  decision plus a packer plus a branch, and nothing else.
+
+Native 10-bit modes were written as 12-bit until 2026-09-15: a file
+byte-identical in size to the same resolution at 12-bit, carrying two fewer
+stops. At 3840×2160 the fix saves 2,073,600 B/frame, 16.7%. See that date's
+entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for the
+hardware confirmation, for how the MSB-alignment question was settled from
+libcamera source rather than from a take, and for the in-file second opinion
+(the IFD1 thumbnail is an ISP render that never touches the packing path) that
+distinguishes "the packer is wrong" from "the shot was overexposed".
+
 ## The embedded thumbnail (IFD1)
 
 Every DNG can carry a second image alongside the raw frame: an uncompressed 8-bit thumbnail
@@ -246,54 +302,57 @@ on the wrong axis would be right at one ISO and wrong at the next. See that
 date's entry in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) for
 the full diagnosis, and the entry after it for the fix's hardware verdict.
 
-Two different mechanisms fix the same defect, and the difference follows
-directly from whether there is a compander to re-render through:
+Two different mechanisms were built to address the same defect, one per bit
+depth, the difference following from whether there is a compander to re-render
+through. Only one of the two is still in the tree:
 
 - **12-bit** re-renders the lores frame from the raw Bayer through
   `CcmpPreviewRenderer` (decompand, then white balance, CCM and gamma), and
   `desaturateHighlight()` blends toward neutral using the **tabulated**
   per-binning anchor described above.
-- **16-bit** keeps the ISP's own render — it is correct everywhere outside the
-  clamp zone (denoise, sharpening, the tuned CCM and gamma), and re-rendering
-  the whole frame to fix one zone would throw that away for no reason.
-  Instead `clip_neutralise.hpp`'s `HighlightNeutraliser` blends the ISP's YUV
-  toward neutral IN PLACE, triggered by the same raw-quad convergence test,
-  with the anchor **measured off the raw every frame** by
-  `clip_plateau.hpp`'s `ClipPlateauDetector` (a 1024-bin histogram of
-  converged quad-max; floor = the 1st-percentile bin's lower edge; anchor =
-  floor − 1.5%, the same margin the 12-bit fix's anchor was measured with). A
-  quad counts as converged only if it is bright (max ≥ 1/4 of full scale) AND
-  equal-code (min ≥ 0.9 × max) — a neutral or coloured subject under real
-  gains is neither, which is what makes the signature mean "clamp" rather
-  than "bright." `ccmpPreviewStage.cpp` runs this per frame: apply with the
-  *previous* frame's anchor, then measure this frame for the next one (one
-  frame of latency), resets the anchor to "off" whenever metadata
-  `AnalogueGain` changes (a stale anchor after a gain change would whiten
-  highlights that are no longer clipped), and skips auto-detection — logging
-  once — when `max(r_gain, b_gain) < 1.15`, because near-unity gains make an
-  ordinary neutral subject equal-code too. `sensorClipCode` still works as an
-  override in 16-bit, but there it means something stronger than in 12-bit:
-  non-zero switches auto-detection off entirely rather than just overriding a
-  table lookup.
+- **16-bit** has **no correction in the tree at all** — see the status note
+  below. It keeps the ISP's own render, unmodified.
 
-As a side effect of measuring the clamp per frame, 16-bit's stage also
-answers the open question the 12-bit fix left behind: whether
-`CcmpAnchor::clip_code` (2900 / 2582) still holds at gains other than the one
-it was measured at. The 12-bit path now runs the same detector in **shadow
-mode** — fed from `quadRgb()` via `setPlateauDetector()`, accumulated over
-the same 120-frame window as the periodic report and never adopted or allowed
-to change a rendered byte — and appends what it would measure to the
-existing log line.
+### Status as of 2026-09-15: read this before trusting anything above
 
-**Reading the 16-bit log line:** `clamp anchor N (auto|override|off), plateau
-floor F from C converged quads of S, peak raw code P, highest uncorrected U,
-D quads fully desaturated`. Same falsifier as 12-bit: `highest uncorrected`
-tracking the plateau floor instead of sitting under the ramp start means the
-anchor is too high. `converged quads` at 0 while a blown area is in frame
-means the convergence test itself is wrong for that footage — that is a
-finding, not a tuning knob. The 12-bit periodic line now reads `... (clip
-anchor N), auto floor N, would anchor M` — the appended pair is the shadow
-measurement, `clip anchor N` remains the table value actually in force.
+This section is deliberately a status note rather than a rewrite, because the
+work it describes is **parked, not finished**, and the next person to pick it
+up needs to know what was tried as well as what survives.
+
+**What is in the tree on `dev`/`main`:**
+
+| | correction code | operator's verdict on the preview |
+|---|---|---|
+| **12-bit** ClearHDR | **present** — `CcmpPreviewRenderer`, `desaturateHighlight()`, `CcmpAnchor::clip_code`, `sensorClipCode` | *"doesn't really work now"* |
+| **16-bit** ClearHDR | **absent** — reverted | *"works"* |
+
+That is the inverse of what you would guess, and it is the single most
+important fact on this page for anyone resuming this: **the mode with the
+correction is the one that looks wrong, and the mode without it looks fine.**
+
+An earlier version of this page described a 16-bit stack —
+`clip_neutralise.hpp`'s `HighlightNeutraliser`, `clip_plateau.hpp`'s
+`ClipPlateauDetector`, a per-frame measured anchor, a `clip_convergence.hpp`
+quad test, and a "shadow mode" detector feeding the 12-bit path. **None of
+those files exist any more.** They were backed out by five reverts and no
+reference to them remains in `cinepi/`. If you are reading this page in a
+cached form that still describes them, check the source first: the page was
+wrong for some days before an unrelated change happened to read it.
+
+**What the evidence supports, and what it does not.** The 2026-09-14 entries
+in [`../lessons/hardware-log.md`](../lessons/hardware-log.md) establish that
+the HG/LG merge clamps at a hard ceiling around 55–59% of the container, and
+conclude that correcting the preview "can only choose what colour the plateau
+is painted" — i.e. that this is a sensor-level limit, not a rendering one.
+That conclusion predicts **both** modes looking wrong, so it does not by
+itself explain the 12-bit/16-bit split in the table above. **That split is an
+open question**, not a settled mechanism; do not assume the prior explanation
+covers it. See the 2026-09-15 entry for the audit behind the table.
+
+The 12-bit description that precedes this note (the decompand, the per-binning
+`CcmpAnchor::clip_code`, the floor-of-the-clamp-zone anchoring, the log-line
+falsifier) still describes code that is present and is still the right reading
+of how that path is built. Whether it is doing any good is the open question.
 
 ## CineMate Log (`--log-encode`)
 

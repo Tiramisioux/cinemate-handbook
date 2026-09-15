@@ -2700,3 +2700,87 @@ to carry it.
 
 **Confirmed by:** live `set iso` round trips against Redis on 2026-09-14, the gain sweep above,
 and the cinemate suite at 1187 passed / 1399 subtests.
+
+## 2026-09-15 — native 10-bit modes were being padded into 12-bit DNGs; the fix is confirmed on hardware
+
+**Tested:** imx585 colour, 3840x2160 **10-bit SDR**, one take on the Pi with `cinepi-raw` at
+`12657d1` (`feature/native-10bit-dng`, since merged to `dev`/`main`). Operator shot the frame
+and pulled it to the Mac for inspection.
+
+**Worked:** everything the change predicted, to the byte.
+- File **10,376,200 B** against **12,449,800 B** for the same mode before — 10,368,000 of raw
+  strip plus header and thumbnail. The predicted saving of **2,073,600 B/frame (16.7%)** is real.
+- `BitsPerSample` 10, `StripByteCounts` exactly `(3840*10+7)/8 * 2160`, `BlackLevel` **50**
+  (the imx585 10-bit pedestal, 3200/64), `WhiteLevel` 1023, no `LinearizationTable`, IFD1
+  thumbnail chained. Nothing downstream needed changing: every one of those derives from
+  `dng_info.bits`, which is why the fix is confined to the decision plus one packer.
+
+**Did not work / the false alarm worth recording.** The first look at the pixel histogram said
+**88% of pixels pinned at 1023**, which is exactly the signature of the shift being wrong
+(`>> 4` instead of `>> 6` would make every value 4x too large). It was not. The shot was a
+tungsten lamp filling the frame. Two independent checks settled it without another take, and
+both are reusable:
+- The **embedded thumbnail is an ISP render of the lores stream and never touches the DNG
+  packing path.** Decoding IFD1 showed the same blown lamp, so the raw and the ISP agree —
+  the scene was overexposed, not the packer. *An in-file second opinion on any "is the raw
+  wrong?" question, free, in every take that has a thumbnail.*
+- **Arithmetic ruled out the alternatives.** Under `>> 4` the pedestal would land at code 200
+  and nothing could sit below it; the frame's minimum is 122. Under `>> 8` nothing could
+  exceed 255; the frame reaches 1023 across 902 distinct codes. Shift 6 is the only value
+  consistent with the data.
+
+**Why it was broken.** On a Pi 5 libcamera's PiSP handler cannot emit a raw stream in anything
+but an unpacked 16-bit container ("We cannot output CSI2 packed or non 16-bit output from the
+frontend", `pipeline/rpi/pisp/pisp.cpp`), so `bf.bits` is always 16 and `dng_encoder.cpp`'s
+rule `write12bit_ = trusted && bf.bits == 16 && sensor_mode_bit_depth_ != 16` claimed the
+10-bit modes along with everything else. `dng_save()`'s existing 10-bit branch was unreachable
+on Pi 5 — it serves VC4, where rows arrive right-justified at their native depth.
+
+**The alignment was settled at the desk, not on the Pi**, which is the other durable part. The
+question "does PiSP MSB-align to 16 regardless of source depth, or use a fixed `<< 4`?" cannot
+be answered by analogy from the 12-bit case, because 16-12 = 4 makes both hypotheses predict
+the same thing. Three pieces of libcamera source break the tie: `do14bitUnpack()` writes
+`value << 2` == `<< (16-14)`; `CameraSensorHelperImx283` declares "0x32 at 10bits" ->
+`blackLevel_ = 3200` == `50 << 6`; and the RPi IPA's `black_level.cpp` comments "64 in 10 bits
+scaled to 16 bits" -> 4096 == `64 << 6`. The general form is
+`shift = container - sensor_depth`, which `ccmpPreviewStage.cpp` already uses for the preview.
+
+**Confirmed by:** operator, 2026-09-15 — take
+`CINEPI_26-09-15_171619_F14_C00000_cam0`, frame 0, inspected on the Mac; operator's verdict on
+the clipping, verbatim: *"shot was overexposed it works ok"*. 86 checks across the two pure
+suites (`dng_pack` 53, the new `dng_output_depth` 33).
+
+## 2026-09-15 — ClearHDR preview: 16-bit reads OK, 12-bit does not, and the 16-bit correction is no longer in the tree
+
+**Tested:** operator's assessment of the live preview on the current build, alongside a source
+audit of what survives on `dev`/`main` at `5ecc740`.
+
+**Worked:** **16-bit** ClearHDR preview — operator: *"16 bit works"*.
+
+**Did not work:** **12-bit** ClearHDR preview — operator: *"12 bit doesnt really work now"*.
+This is being parked and revisited later, not pursued further in this session.
+
+**Why — or rather, what is established and what is not.** The code state is the part that is
+certain, and it is the inverse of what the symptom might suggest:
+- The **16-bit** correction stack — `clip_plateau.hpp` (`ClipPlateauDetector`),
+  `clip_neutralise.hpp` (`HighlightNeutraliser`) and `clip_convergence.hpp` — is **ABSENT**
+  from `dev`/`main`, backed out by five reverts, with no references left in `cinepi/`. So
+  16-bit reads acceptably *with no correction applied at all*.
+- The **12-bit** correction — `CcmpPreviewRenderer`, `desaturateHighlight()`,
+  `CcmpAnchor::clip_code`, `sensorClipCode` — is **still present**, and is the mode the
+  operator says does not look right.
+
+The mechanism behind that asymmetry is NOT established here, and this entry does not guess at
+it. The strong prior from the 2026-09-14 entries above is that the merge clamps at a hard
+ceiling (~55-59% of the container) and that correcting the preview "can only choose what colour
+the plateau is painted" — which would predict both modes looking wrong, so the 16-bit/12-bit
+split needs its own explanation when this is picked up again.
+
+**Documentation consequence, already applied.** `architecture/cinepi-raw.md` described the
+16-bit `HighlightNeutraliser`/`ClipPlateauDetector` machinery as current and hardware-confirmed.
+It described files that no longer exist. That section has been corrected in the same commit as
+this entry — the drift was caught only because an unrelated change happened to read the page.
+
+**Confirmed by:** operator, 2026-09-15, in answer to a direct question about which half of the
+ClearHDR preview correction the verdict covered; source audit of `dev` at `5ecc740`
+(`git cat-file -e` on each header, `git grep` for the type names).
