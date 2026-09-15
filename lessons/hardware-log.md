@@ -2793,18 +2793,27 @@ ISO 400, read back live from Redis. `cinepi-raw` `fix/clearhdr-whitelevel` @ `96
 (branched from `dev` @ `c6af368`, i.e. dev + four commits, nothing reverted). Subject: a bare
 lamp filling most of the frame — a deliberate worst case, up to 79% of the frame blown.
 
-**Worked: the fix, in every ClearHDR mode.** `WhiteLevel` is now measured from the take's
-first frame and written to tag 0xC61D. Straight out of the camera, no patching:
+**Worked: the fix, in every ClearHDR mode the camera offers.** `WhiteLevel` is now measured
+from the take's first frame and written to tag 0xC61D. Straight out of the camera, no patching
+and no post correction — operator: *"seems to work!"*, then *"also working"* for the 12-bit
+pair:
 
-| take | mode | WhiteLevel written | % of nominal | highlight cast |
-|---|---|---|---|---|
-| `185529_F15` | 4K, 16-bit ClearHDR → log 12 | 55788 | 85.1% | 14.9% → **0.0%** |
-| `185548_F00` | binned HD, 16-bit ClearHDR → log 12 | 35941 | 54.8% | 41.2% → **0.0%** |
+| take | sensor mode | curve | WhiteLevel written | % of nominal | highlight cast |
+|---|---|---|---|---|---|
+| `185529_F15` | 16-bit ClearHDR 4K | log 12 | 55788 | 85.1% | 14.9% → **0.0%** |
+| `185548_F00` | 16-bit ClearHDR binned HD | log 12 | 35941 | 54.8% | 41.2% → **0.0%** |
+| `190052_F02` | 12-bit ClearHDR (CCMP) 4K | composed log 10 | 56921 | 86.9% | 13.2% → **0.0%** |
+| `190128_F04` | 12-bit ClearHDR (CCMP) HD | composed log 10 | 54481 | 83.1% | 17.7% → **0.0%** |
 
-Post-white-balance RGB in the blown area is exactly 1.000/1.000/1.000 in both. The per-take
-latch holds: one identical value across all 26 frames of the 4K take and all 32 of the HD one,
-which is the property that matters — WhiteLevel is the normalisation denominator, so a
-per-frame value would step exposure mid-clip.
+Post-white-balance RGB in the blown area is exactly 1.000/1.000/1.000 in all four. **Both
+ClearHDR sensor families and both the plain and COMPOSED curves are covered**: the last two
+carry BlackLevel 3200 with a LinearizationTable, i.e. the CCMP decompand folded into the log
+curve, which is a distinct code path from the first two and the one where the level tags have
+to describe the log curve rather than CCMP's own.
+
+The per-take latch holds in every case: one identical value across all 26, 32, 24 and 18
+frames respectively. That is the property that matters — WhiteLevel is the normalisation
+denominator, so a per-frame value would step exposure mid-clip.
 
 **The binned HD value was predicted in advance.** 35941 was measured off an earlier take shot
 on `dev` and stated before this build existed; the camera then wrote 35941. The 4K take landed
@@ -2868,8 +2877,9 @@ documented window), and it still clamped at 88%. The milestone's own entry says 
 camera already had. The clamp was always there; a chart scene never blew a highlight hard
 enough to show it. No revert was performed and none is needed.
 
-**Confirmed by:** operator, 2026-09-15 18:55, takes `CINEPI_26-09-15_185529_F15_C00000_cam0`
-and `CINEPI_26-09-15_185548_F00_C00001_cam0` (58 frames total, WhiteLevel constant per take);
+**Confirmed by:** operator, 2026-09-15 18:55 and 19:01, takes
+`CINEPI_26-09-15_185529_F15_C00000_cam0`, `_185548_F00_C00001_cam0`, `_190052_F02_C00001_cam0`
+and `_190128_F04_C00000_cam0` (100 frames total, WhiteLevel constant within each take);
 `strings /usr/local/bin/cinepi-raw | grep -c "ClearHDR clamp"` = 2 on the running binary;
 pixel forensics on eleven recorded takes this session; `clip_ceiling_test` (45 assertions,
 fixtures are the per-channel histograms of those same files) passing off-device.
