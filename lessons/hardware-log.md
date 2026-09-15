@@ -2883,3 +2883,66 @@ and `_190128_F04_C00000_cam0` (100 frames total, WhiteLevel constant within each
 `strings /usr/local/bin/cinepi-raw | grep -c "ClearHDR clamp"` = 2 on the running binary;
 pixel forensics on eleven recorded takes this session; `clip_ceiling_test` (45 assertions,
 fixtures are the per-channel histograms of those same files) passing off-device.
+
+## 2026-09-15 — a settings key with no control on the page is deleted on save, and ClearHDR 12-bit came back on through the gap
+
+**Tested:** the live `image_capture.hdr` block in `/home/pi/cinemate/settings.jsonc` on
+`pi@cinepi.local`, against `cinemate` `dev` (`d2803ec4`, the tip before this session's fix), while
+diagnosing an operator report that the settings editor's "Enable IMX585 ClearHDR 16-bit HD"
+switch also enabled 12-bit ClearHDR.
+
+**Worked:** the source-reading diagnosis of the *first* defect was correct. `SensorDetect._finalize_modes()`
+gated the binned modes on `hdr and width < 3840` — every binned ClearHDR mode regardless of bit
+depth — so `imx585_clear_hdr_16bit_hd` did hand back 12-bit HD along with 16-bit HD, which is
+exactly what its own help text promised it would not do.
+
+**Did not work / surprised:** that gate was not what the operator was actually hitting. Reading the
+camera's live settings file showed its `image_capture.hdr` block contained
+`imx585_clear_hdr_16bit: true` and `imx585_clear_hdr_16bit_hd: true` and **neither**
+`imx585_clear_hdr_12bit` **nor** the legacy `imx585_clear_hdr`. Both keys had been deleted from the
+file. 12-bit ClearHDR was therefore on at *both* frame sizes, and no switch on the page could turn
+it off — a state no reading of `settings.jsonc` in the repo would have predicted, because the
+repo's copy has the keys.
+
+**Why:** two mechanisms compounding, and only the second is invisible from source.
+
+1. `settings_editor.html`'s `buildState()` builds the saved settings object from
+   `document.querySelectorAll('[data-path]')` — the controls the page renders, and nothing else.
+   A settings key with no control on the page is not merely left unedited, it is **absent from
+   what gets written**. `imx585_clear_hdr_12bit` had been deliberately kept off the page, and the
+   legacy `imx585_clear_hdr` never had a control, so every save of the settings page silently
+   dropped both.
+2. `SensorDetect._clear_hdr_depths()` reads a missing `_12bit` as "no explicit opinion, fall back
+   to `imx585_clear_hdr`", which itself defaults to **True** when absent. So the deletion did not
+   leave the setting at its shipped default (off) — it inverted it. A "hidden by default" setting
+   became permanently on, via a file the operator never hand-edited.
+
+The failure is silent in both directions: nothing logs a dropped key, and the resulting mode table
+(seven modes instead of five) looks like a legitimate configuration.
+
+**Fixed:** in two commits, the same day.
+
+- `cinemate` `dev` `3114014f` fixes the ClearHDR half. `imx585_clear_hdr_16bit_hd` is removed along
+  with the `width < 3840` test; the two per-depth switches are the whole ClearHDR answer and
+  `image_capture.k_steps` decides frame size, for ClearHDR as it already did for SDR. Both depths
+  get a control on the page, which closes mechanism 1 *for those two keys only*.
+- `cinemate` `dev` `7de3065a` fixes mechanism 1 generally: the page now edits the file rather than
+  replacing it, so a key with no control survives a save. Worth reading that commit for the list of
+  what else the old behaviour was eating — `input_peripherals.pots` (every analogue pot assignment)
+  among it, which is consistent with this camera's live file carrying an empty `"pots": []`.
+
+**Verified on the camera after deploy:** service restarted on `dev` `3114014f`; both toggles render
+on the live settings page (`/settings-editor/`, HTTP 200, both `data-path` attributes present); with
+16-bit on and 12-bit off the `/settings-editor/api/sensor-modes` table is the five-mode imx585 table
+`docs/sensors.md` documents; with 12-bit subsequently switched on it is seven modes, ClearHDR at both
+sizes of both depths. The stored `sensor_mode` re-resolved across the renumbering by capture identity
+rather than index, as designed ("Stored sensor mode 6 is no longer that mode -- re-resolved to mode 4").
+
+**Worth knowing for the next session on this rig:** the camera is shared. The live `settings.jsonc`
+was rewritten at 18:54, between this session's restart and its verification read, by a concurrent
+session working the ClearHDR clamp entry above. Treat a live config read from `cinepi.local` the way
+this handbook already tells you to treat a shared checkout — stale within minutes.
+
+**Confirmed by:** operator, 2026-09-15; live reads of `/home/pi/cinemate/settings.jsonc` (backed up
+to `/home/pi/settings.jsonc.bak-20260915-185210`), `/settings-editor/api/sensor-modes` before and
+after, and `journalctl -u cinemate-autostart` across the restart.
