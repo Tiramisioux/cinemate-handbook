@@ -2784,3 +2784,92 @@ this entry — the drift was caught only because an unrelated change happened to
 **Confirmed by:** operator, 2026-09-15, in answer to a direct question about which half of the
 ClearHDR preview correction the verdict covered; source audit of `dev` at `5ecc740`
 (`git cat-file -e` on each header, `git grep` for the type names).
+
+## 2026-09-15 — ClearHDR magenta highlights are a WhiteLevel bug, fixed and confirmed in the DNG; and "the DNG is fine" was wrong
+
+**Tested:** colour rig (`cinepi`), operator-shot takes across the whole ClearHDR matrix at the
+2026-08-31 milestone operating point — `hdr_blend=5`, `hdr_gain_adder=1`, thresholds empty,
+ISO 400, read back live from Redis. `cinepi-raw` `fix/clearhdr-whitelevel` @ `96b6811`
+(branched from `dev` @ `c6af368`, i.e. dev + four commits, nothing reverted). Subject: a bare
+lamp filling most of the frame — a deliberate worst case, up to 79% of the frame blown.
+
+**Worked: the fix, in every ClearHDR mode.** `WhiteLevel` is now measured from the take's
+first frame and written to tag 0xC61D. Straight out of the camera, no patching:
+
+| take | mode | WhiteLevel written | % of nominal | highlight cast |
+|---|---|---|---|---|
+| `185529_F15` | 4K, 16-bit ClearHDR → log 12 | 55788 | 85.1% | 14.9% → **0.0%** |
+| `185548_F00` | binned HD, 16-bit ClearHDR → log 12 | 35941 | 54.8% | 41.2% → **0.0%** |
+
+Post-white-balance RGB in the blown area is exactly 1.000/1.000/1.000 in both. The per-take
+latch holds: one identical value across all 26 frames of the 4K take and all 32 of the HD one,
+which is the property that matters — WhiteLevel is the normalisation denominator, so a
+per-frame value would step exposure mid-clip.
+
+**The binned HD value was predicted in advance.** 35941 was measured off an earlier take shot
+on `dev` and stated before this build existed; the camera then wrote 35941. The 4K take landed
+on 55788 rather than the predicted ~58477 because it is a different take at a different
+exposure — which is the point: the clamp is an operating point, not a constant.
+
+**Did not work — three traps, each of which cost a cycle:**
+
+1. **`meson compile` is not `meson install`.** Two rounds of takes came back unchanged with
+   `WhiteLevel 65535` while the branch was checked out and built. `ninja` reported `[4/10]
+   Generating symbol file` — nothing to rebuild — because the objects were already current;
+   the binary at `/usr/local/bin/cinepi-raw` was simply never replaced. `strings
+   /usr/local/bin/cinepi-raw | grep -c "ClearHDR clamp"` returning 0 vs 2 is the check that
+   settles it in one command, and it should be the first thing run after any deploy.
+2. **A code-space threshold is a statement about one encoding.** The first detector counted
+   STORED CODES with thresholds as fractions of the code container. It found the clamp in
+   every 12-bit log take and refused on 16-bit linear, whose clamp is physically identical but
+   ~50x wider in code space (≈20 codes of 4096 through the log curve, ≈1000 of 65536 linear),
+   with a long thin tail. Measured: the rule allowed 0.01% of samples above the peak; the real
+   tail was 0.08%. The fix is to apply the LinearizationTable on the way INTO the histogram and
+   make every rule relative. One set of constants then accepts all nine recorded ClearHDR takes
+   across 10/12/16-bit storage, log on and off, 4K and binned, while still refusing both SDR
+   takes — no per-mode gate.
+3. **Decoding a 10-bit DNG strip as MIPI CSI-2 looks like it works.** `dng_pack.hpp` writes
+   DNG's contiguous big-endian layout (4 px / 5 bytes, MSB first), not MIPI. Read as MIPI, a
+   clipped region still reads as clipped — all-ones is all-ones under either interpretation —
+   so a mis-decoded file appears to clip cleanly at full scale, which is exactly the evidence a
+   ceiling detector keys on. It hides where it matters most. The giveaway is same-colour
+   neighbour distance: **0.5 under the right unpacking, 271 under the wrong one.** This
+   produced two wrong desk conclusions before it was caught.
+
+**Why.** AsShotNeutral is ~(0.5882, 1, 0.5882), so white balance multiplies R and B by ~1.7 and
+green by exactly 1.0. When the merge clamps below the declared WhiteLevel, R and B scale past
+1.0 and clip while green stays short by the same fraction the clamp falls short — magenta, by
+construction. And because no pixel ever reaches the declared white, every converter concludes
+the frame holds no clipped highlight and skips highlight reconstruction, so grading cannot
+remove it. Declaring the measured clamp puts all three channels back on one ceiling.
+
+This also explains **why binned HD looked worse than 4K**, which the operator reported
+independently before it was measured: the binned clamp sits at 54.8% of the container against
+83–89% at full res, so green falls further short and the cast scales with the shortfall.
+
+**This corrects earlier entries in this log.** The 2026-09-13 entry
+("ISO 1200 pink … DNG fine") and the general framing that the magenta was a preview-side
+artefact are wrong for the recording path. Measured across eleven recorded takes, **every one
+of the nine ClearHDR takes is clamped and magenta in the DNG itself**, between 54.8% and 89.3%
+of declared white; only the two native 10-bit SDR takes reach their white cleanly. The
+preview-side work was treating a symptom of a file-level defect.
+
+**What this does NOT fix.** The colour of a clamped highlight, not its detail. The merge
+stopped; there is no roll-off in the signal to recover. A featureless pink blob becomes a
+featureless white blob — which is what a blown highlight should look like. The 2026-09-14
+"the merge ceiling is hard at ~0.55 of the container" entry stands unchanged, and the binned
+54.8% measured here corroborates its binned figure by a completely independent route.
+
+**Also settled: a code revert was not the answer.** The operator asked to revert the ClearHDR
+chain to the last reported-working state. Redis readback showed the camera already AT the
+2026-08-31 milestone operating point (blend 5, adder 1, thresholds empty, ISO 400 — inside the
+documented window), and it still clamped at 88%. The milestone's own entry says it was
+"verified visually by the operator, not by pixel forensics", and its fix was a setting the
+camera already had. The clamp was always there; a chart scene never blew a highlight hard
+enough to show it. No revert was performed and none is needed.
+
+**Confirmed by:** operator, 2026-09-15 18:55, takes `CINEPI_26-09-15_185529_F15_C00000_cam0`
+and `CINEPI_26-09-15_185548_F00_C00001_cam0` (58 frames total, WhiteLevel constant per take);
+`strings /usr/local/bin/cinepi-raw | grep -c "ClearHDR clamp"` = 2 on the running binary;
+pixel forensics on eleven recorded takes this session; `clip_ceiling_test` (45 assertions,
+fixtures are the per-channel histograms of those same files) passing off-device.
