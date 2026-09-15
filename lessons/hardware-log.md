@@ -2946,3 +2946,64 @@ this handbook already tells you to treat a shared checkout — stale within minu
 **Confirmed by:** operator, 2026-09-15; live reads of `/home/pi/cinemate/settings.jsonc` (backed up
 to `/home/pi/settings.jsonc.bak-20260915-185210`), `/settings-editor/api/sensor-modes` before and
 after, and `journalctl -u cinemate-autostart` across the restart.
+
+## 2026-09-15 — 16-bit ClearHDR preview magenta: the trigger was unreachable, not the compander
+
+**Tested:** cinepi-raw `feature/clearhdr-stage2` at `f435514`, 16-bit ClearHDR, HD then 4K,
+an overexposed lamp bulb filling most of frame with a banana beside it as a colour control.
+Before/after measured off the MJPEG preview on port 8000 directly, not judged by eye.
+
+**Worked:** both modes went fully neutral in the blown region, and the clamp was measured
+live within ~2 s of each mode change.
+
+| mode | before (bulb R/G/B) | green deficit | after | clamp measured |
+|---|---|---|---|---|
+| 16-bit HD | 224 / 93 / 231 | 59.1% | 235 / 235 / 235 | 35968 |
+| 16-bit 4K | 232 / 206 / 233 | 11.4% | 235 / 235 / 235 | 55381 |
+
+The banana stayed yellow with its tonal detail intact throughout (230.7 / 193.8 / 20.2), which
+is the control that matters: the failure mode of an anchor set too LOW is that every saturated
+practical in frame whitens, and that did not happen.
+
+**Did not work:** nothing in this test. Two things worth recording anyway:
+
+- The first hypothesis was wrong and a unit test caught it before the Pi did. The assumption
+  was that this was the DNG WhiteLevel fix a second time — declare the true clamp, let the
+  arithmetic do the rest. It is not. Normalisation moves the LEVEL; magenta is a RATIO, and
+  rescaling cannot change one. Writing the test first is what surfaced this; the model of the
+  defect was confidently wrong and the render output was unambiguous.
+- `highest uncorrected` in the periodic report reads close to `peak raw code` in the report
+  that spans an adoption (HD 35968/35968, 4K 57417/57385). That window straddles the moment
+  the reference changed, so it is counting pre-adoption frames. Expect it to drop away in a
+  window entirely after adoption; if it ever does not, that is a real finding and this note
+  is where to start.
+
+**Why:** the clamp is digital and downstream of the CFA, so all four Bayer samples of a blown
+quad pin on one code. That is not a neutral subject — a neutral one presents raw channels
+*below* green by the gains that later neutralise them — so AWB takes the clamped quad to
+(2.5, 1.0, 2.2) and the CCM, doing its job, pushes it to (3.7, −0.15, 2.9).
+
+The renderer already had the thing that fixes this: `desaturateHighlight()` blends a clipped
+quad toward its own maximum, which clamps to white. It simply never fired. Its trigger sits
+just under the normalisation reference, so referencing 65535 while the sensor clamps near
+55381 put the trigger ~10000 codes above anything the hardware can emit — armed and
+unreachable. This is the *same* defect 12-bit was fixed for in `ccmp_preview.hpp` ("the
+trigger ~950 codes above anything the sensor can produce"); 12-bit got a per-binning anchor,
+and 16-bit got no anchor and no stage at all, because it has no compander to undo. True about
+the compander, and beside the point.
+
+**There is no constant to hard-code, and this session is the proof.** 35968 in HD and 55381 in
+4K — same sensor, same gain, same lamp, four minutes apart, a factor of 1.54 between them.
+That is on top of the gain dependence already recorded on 2026-09-14 (code 80 → 48600,
+code 71 → 54100, more gain giving a *lower* ceiling). Any fixed anchor is wrong for most
+operating points, which is how the previous two anchors looked right in the log and did
+nothing on the picture.
+
+**Cross-check worth keeping:** the preview measured 35968 live in HD; the encoder's detector
+returned 35941 on a recorded take at the same operating point — 0.08% apart, from two
+independent code paths over different frames. That is the strongest evidence so far that
+`clip_ceiling.hpp` measures a real property of the sensor rather than a property of one
+histogram.
+
+**Confirmed by:** operator ("hd works") plus journal lines quoted above and direct RGB
+measurement of the port-8000 preview before and after, this session.
