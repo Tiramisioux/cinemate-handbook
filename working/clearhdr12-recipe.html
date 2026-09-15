@@ -1,0 +1,547 @@
+<title>ClearHDR 12-bit Recipe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EDF1F0; --surface:#FBFDFC; --surface-2:#E4EBE9;
+  --ink:#10161A; --muted:#556467; --rule:#CFDAD8;
+  --accent:#AE2459; --accent-soft:#F3DCE5;
+  --ok:#0C6455; --ok-bg:#DDEDE8;
+  --warn:#7E5A00; --warn-bg:#F3E9CE;
+  --unk:#5E6C6F; --unk-bg:#E2E8E7;
+  --shadow:0 1px 2px rgba(16,22,26,.06), 0 8px 24px -16px rgba(16,22,26,.25);
+}
+:root:not([data-theme="light"]){ @media (prefers-color-scheme: dark){
+  --bg:#0D1214; --surface:#151C1F; --surface-2:#1D2629;
+  --ink:#E7EEEC; --muted:#93A3A5; --rule:#273134;
+  --accent:#F0799F; --accent-soft:#3A1E2A;
+  --ok:#57C9B0; --ok-bg:#12302C;
+  --warn:#DDAE45; --warn-bg:#31280F;
+  --unk:#93A3A5; --unk-bg:#222B2E;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.6);
+}}
+:root[data-theme="dark"]{
+  --bg:#0D1214; --surface:#151C1F; --surface-2:#1D2629;
+  --ink:#E7EEEC; --muted:#93A3A5; --rule:#273134;
+  --accent:#F0799F; --accent-soft:#3A1E2A;
+  --ok:#57C9B0; --ok-bg:#12302C;
+  --warn:#DDAE45; --warn-bg:#31280F;
+  --unk:#93A3A5; --unk-bg:#222B2E;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:Spectral,Georgia,serif; font-size:17px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding-inline:20px; padding-block:0 96px}
+.col{max-width:68ch}
+h1,h2,h3,h4,.eyebrow,.chip,th,.nav,.stat-n,.tag{font-family:Archivo,"Helvetica Neue",Arial,sans-serif}
+code,kbd,.mono,.reg,td.num,.stat-n{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+h1{font-size:clamp(2.1rem,5.2vw,3.1rem); line-height:1.04; font-weight:700; letter-spacing:-.022em; margin:0; text-wrap:balance}
+h2{font-size:clamp(1.35rem,2.6vw,1.7rem); font-weight:600; letter-spacing:-.012em; line-height:1.18; margin:0 0 .2em; text-wrap:balance}
+h3{font-size:1.06rem; font-weight:600; letter-spacing:-.005em; margin:0 0 .35em; text-wrap:balance}
+h4{font-size:.83rem; font-weight:600; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin:0 0 .5em}
+p{margin:0 0 .9em}
+a{color:var(--accent)}
+.eyebrow{font-size:.74rem; text-transform:uppercase; letter-spacing:.16em; font-weight:600; color:var(--accent)}
+.lede{font-size:1.16rem; color:var(--muted); margin-top:.7em}
+.muted{color:var(--muted)}
+hr{border:0; border-top:1px solid var(--rule); margin:0}
+
+header.top{padding-block:64px 40px; border-bottom:1px solid var(--rule)}
+.meta{display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:26px; font-family:Archivo,sans-serif; font-size:.79rem; color:var(--muted)}
+.meta b{color:var(--ink); font-weight:600}
+
+nav.nav{position:sticky; top:0; z-index:10; background:color-mix(in srgb,var(--bg) 92%,transparent);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--rule); font-size:.78rem; letter-spacing:.02em}
+nav.nav ul{display:flex; flex-wrap:wrap; gap:4px 18px; list-style:none; margin:0 auto; padding:11px 20px; max-width:1080px}
+nav.nav a{color:var(--muted); text-decoration:none; font-weight:500}
+nav.nav a:hover,nav.nav a:focus-visible{color:var(--accent)}
+
+section{padding-block:52px; border-bottom:1px solid var(--rule)}
+section:last-of-type{border-bottom:0}
+.section-head{display:flex; align-items:baseline; gap:14px; margin-bottom:22px; flex-wrap:wrap}
+.section-head .n{font-family:"IBM Plex Mono",monospace; font-size:.8rem; color:var(--accent); font-weight:600}
+
+/* confidence chips: form carries the meaning, not colour alone */
+.chip{display:inline-flex; align-items:center; gap:.4em; font-size:.68rem; font-weight:600;
+  text-transform:uppercase; letter-spacing:.07em; padding:.2em .55em; border-radius:3px; white-space:nowrap; vertical-align:.08em}
+.chip.ok{background:var(--ok-bg); color:var(--ok); border:1px solid transparent}
+.chip.probable{background:transparent; color:var(--warn); border:1px solid currentColor}
+.chip.unknown{background:transparent; color:var(--unk); border:1px dashed currentColor}
+.legend{display:flex; flex-wrap:wrap; gap:14px; margin-top:24px; padding:14px 16px; background:var(--surface); border:1px solid var(--rule); border-radius:5px}
+.legend div{font-size:.84rem; color:var(--muted); display:flex; align-items:center; gap:.6em}
+
+.verdict{background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--accent);
+  border-radius:4px; padding:26px 28px; box-shadow:var(--shadow)}
+.verdict p:last-child{margin-bottom:0}
+.verdict strong{font-weight:600}
+
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:1px; background:var(--rule);
+  border:1px solid var(--rule); border-radius:4px; overflow:hidden; margin:26px 0 0}
+.stat{background:var(--surface); padding:16px 18px}
+.stat-n{font-size:1.5rem; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1.1}
+.stat-l{font-size:.76rem; color:var(--muted); margin-top:5px; font-family:Archivo,sans-serif; line-height:1.35}
+
+.tablewrap{overflow-x:auto; margin:20px 0; border:1px solid var(--rule); border-radius:4px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:.86rem; min-width:520px}
+th{font-size:.72rem; text-transform:uppercase; letter-spacing:.07em; font-weight:600; color:var(--muted);
+  text-align:left; padding:11px 14px; border-bottom:1px solid var(--rule); white-space:nowrap}
+td{padding:10px 14px; border-bottom:1px solid var(--rule); vertical-align:top; font-size:.9rem}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+.reg{font-size:.85em; color:var(--accent)}
+tbody tr:hover{background:var(--surface-2)}
+
+.paths{display:grid; gap:18px; margin-top:22px}
+@media (min-width:760px){ .paths{grid-template-columns:repeat(2,1fr)} }
+@media (min-width:1080px){ .paths{grid-template-columns:repeat(4,1fr)} }
+.path{background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:20px 20px 22px; display:flex; flex-direction:column; gap:12px}
+.path.lead{border-color:var(--accent); box-shadow:var(--shadow)}
+.path .rank{font-family:Archivo,sans-serif; font-size:.7rem; text-transform:uppercase; letter-spacing:.11em; font-weight:600; color:var(--muted)}
+.path.lead .rank{color:var(--accent)}
+.path h3{margin:0}
+.path dl{margin:0; display:grid; grid-template-columns:auto 1fr; gap:5px 12px; font-size:.85rem}
+.path dt{font-family:Archivo,sans-serif; font-size:.68rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); padding-top:.25em}
+.path dd{margin:0}
+
+figure{margin:26px 0 0}
+figcaption{font-size:.82rem; color:var(--muted); margin-top:12px; max-width:68ch}
+.svgwrap{overflow-x:auto; background:var(--surface); border:1px solid var(--rule); border-radius:5px; padding:22px 20px}
+svg{display:block; max-width:100%; height:auto; min-width:660px}
+.s-box{fill:var(--surface-2); stroke:var(--rule)}
+.s-ink{fill:var(--ink)}
+.s-muted{fill:var(--muted)}
+.s-accent{fill:var(--accent)}
+.s-accent-line{stroke:var(--accent)}
+.s-rule{stroke:var(--rule)}
+.s-lin{fill:var(--ok)}
+.s-comp{fill:var(--accent)}
+.s-label{font-family:Archivo,sans-serif; font-size:11px; font-weight:600}
+.s-small{font-family:"IBM Plex Mono",monospace; font-size:9.5px}
+
+.recipe{margin-top:22px; display:flex; flex-direction:column; gap:26px}
+.layer{background:var(--surface); border:1px solid var(--rule); border-radius:5px; overflow:hidden}
+.layer > h3{display:flex; align-items:baseline; gap:10px; margin:0; padding:14px 18px; background:var(--surface-2); border-bottom:1px solid var(--rule); font-size:.95rem}
+.layer > h3 .where{font-family:"IBM Plex Mono",monospace; font-size:.72rem; color:var(--muted); font-weight:400}
+.steps{list-style:none; margin:0; padding:0}
+.steps li{display:grid; grid-template-columns:auto auto 1fr; gap:10px 12px; padding:13px 18px; border-bottom:1px solid var(--rule); align-items:baseline; font-size:.93rem}
+.steps li:last-child{border-bottom:0}
+.steps .id{font-family:"IBM Plex Mono",monospace; font-size:.78rem; color:var(--muted); font-variant-numeric:tabular-nums}
+@media (max-width:620px){
+  .steps li{grid-template-columns:auto 1fr}
+  .steps li .chip{grid-column:1; grid-row:2}
+  .steps li .body{grid-column:1 / -1; grid-row:3}
+}
+.steps .body b{font-weight:600}
+
+.qlist{list-style:none; margin:22px 0 0; padding:0; display:flex; flex-direction:column; gap:1px; background:var(--rule); border:1px solid var(--rule); border-radius:4px; overflow:hidden}
+.qlist li{background:var(--surface); padding:15px 18px}
+.qlist .q{font-weight:600; font-size:.95rem; display:block; margin-bottom:5px}
+.qlist .a{font-size:.87rem; color:var(--muted)}
+.qlist .a b{color:var(--ink); font-weight:600}
+
+ol.plain,ul.plain{padding-left:1.2em; margin:0 0 .9em}
+ol.plain li,ul.plain li{margin-bottom:.45em}
+.footer{padding-block:40px 0; font-size:.83rem; color:var(--muted)}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+
+<nav class="nav" aria-label="Sections">
+  <ul>
+    <li><a href="#verdict">Verdict</a></li>
+    <li><a href="#measured">What the camera said</a></li>
+    <li><a href="#pipeline">Pipeline</a></li>
+    <li><a href="#paths">Three paths</a></li>
+    <li><a href="#shutter">Rolling shutter</a></li>
+    <li><a href="#clamp">Merge clamp</a></li>
+    <li><a href="#recipe">Recipe</a></li>
+    <li><a href="#measure">Measurements</a></li>
+    <li><a href="#vendor">Vendor questions</a></li>
+  </ul>
+</nav>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">imx585 &middot; CineMate &middot; cinepi-raw</div>
+  <h1>Making 12-bit ClearHDR work</h1>
+  <p class="lede col">What the pipeline actually does to companded sensor data, why the preview renders pink, and the ordered configuration that follows from it. Every line is labelled by how well it is known.</p>
+  <div class="meta">
+    <span><b>Scope</b> imx585 colour, Pi 5 / PiSP, driver <span class="mono">cinemate-7modes</span></span>
+    <span><b>Code</b> cinepi-raw <span class="mono">d1b3ac1</span> + <span class="mono">ea0077e</span>, libcamera fork <span class="mono">cinemate</span></span>
+    <span><b>Measured on hardware</b> nothing in this document</span>
+  </div>
+  <div class="legend">
+    <div><span class="chip ok">confirmed</span> observed in code or recorded data</div>
+    <div><span class="chip probable">probable</span> follows from evidence, one step short</div>
+    <div><span class="chip unknown">unknown</span> needs the measurement named beside it</div>
+  </div>
+</header>
+
+<section id="verdict">
+  <div class="section-head"><span class="n">01</span><h2>The verdict</h2></div>
+  <div class="verdict col">
+    <p><strong>Stop paying for 12-bit ClearHDR, and capture 16-bit with a log encode instead.</strong> The sensor's 12-bit mode exists to save link bandwidth and file size. On this rig it saves neither in a way that matters, and it costs a compander whose curve must be measured per binning, a full-frame CPU re-render of every preview frame, and a class of highlight anchor that has now been wrong three times.</p>
+    <p>Make 16-bit ClearHDR with <span class="mono">--log-encode 12</span> the default capture, and keep 12-bit as an opt-in compatibility mode for older kernels and unpatched mono rigs. The one gate before committing is sustained write throughput, which nobody has measured for this combination.</p>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-n">identical</div><div class="stat-l">Advertised frame rate, both depths, every link frequency <span class="chip ok">confirmed</span></div></div>
+    <div class="stat"><div class="stat-n">+1.8%</div><div class="stat-l">File size per 4K frame, 16-bit log-12 against today's 12-bit <span class="chip probable">probable</span></div></div>
+    <div class="stat"><div class="stat-n">172 of 4096</div><div class="stat-l">Codes the compander spends where the log curve is up to 32× finer <span class="chip ok">confirmed</span></div></div>
+    <div class="stat"><div class="stat-n">unmeasured</div><div class="stat-l">Every per-frame CPU cost on the Pi itself <span class="chip unknown">unknown</span></div></div>
+  </div>
+  <p class="col" style="margin-top:26px">The third figure is the real argument. Both encodings put a 16-bit linear signal into 12 bits. The sensor's compander spends 172 codes on the range from 500 to 11500 in linear units, at 64 units per code. CineMate's own log curve spends 1378 codes on the same range, between 2 and 26 units per code. Where the picture lives, the log curve is between 4 and 32 times finer. The compander is finer only above roughly 15000, which is the region the merge clamp flattens anyway.</p>
+  <p class="col"><strong>One caution about the file-size figure.</strong> It is not a reason to expect relief on the write stream either way: with the thumbnail a live take was seen to carry, both depths land near 330 MB/s at 4K and 25 frames per second, within a couple of percent of each other.</p>
+</section>
+
+<section id="measured">
+  <div class="section-head"><span class="n">02</span><h2>What the camera said afterwards</h2></div>
+  <p class="col">This page was written from code and archived measurements. It was then used as the brief for a night of work at the camera, and several of its claims did not survive contact. The hardware log is the record; this section says only what changed and why, so nothing here quietly disagrees with it.</p>
+  <div class="verdict col" style="border-left-color:var(--ok)">
+    <p><strong>12-bit ClearHDR now passes.</strong> The operator's verdict after the final build was that it looked good, which is the first unqualified pass any ClearHDR mode has had in this investigation. It came from letting the 12-bit path anchor on its own per-frame measurement instead of a table constant, not from anything done to the preview's appearance.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>What this page said</th><th>What the camera showed</th></tr></thead>
+      <tbody>
+        <tr><td>The clamp moves with gain, blend and scene, so it must be measured every frame.</td><td><strong>It is an operating point, not a property.</strong> Below sensor gain code 60 there is no plateau at all: the merge uses the whole container. Above the documented gain window it collapses progressively, 4095 to 3188 to 2408. Every clamp number ever recorded here is that one curve.</td></tr>
+        <tr><td>Keep ClearHDR between ISO 200 and 1400.</td><td><strong>200 to 799.</strong> My figure assumed a 6 dB gain adder; the sensor runs 12 dB, which caps usable gain lower. A later gain sweep put the edge one step tighter still: 799 is the last ISO that lands inside the sensor's combination window, and 800 is the first outside it.</td></tr>
+        <tr><td>Feather the matte: take the mean across each block, then blur.</td><td><strong>Backwards.</strong> On real takes the mean lets one fired quad drag a whole block, and desaturates 25.7% of the surround against 4.6% for keeping the erosion and blurring that. My synthetic lamp ranked them the other way round, which is how the wrong prescription got written.</td></tr>
+        <tr><td>Try the in-place correction on 12-bit to remove the render from the highlight path.</td><td><strong>Does not help.</strong> The render is 71% of the stage and it is there for the compander, not the highlight, so removing the highlight work from it leaves the cost untouched.</td></tr>
+        <tr><td>The write stream is the gate, at 380 MB/s against a 355 MB/s stall.</td><td><strong>Overstated.</strong> The thumbnail is half resolution, not the full preview plane, so both candidates sit near 330 MB/s, below the stall. See the note under the throughput table.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>The root cause nobody had found</h3>
+    <p>The artefacts that reverted this work twice came from a bug this page did not spot. The rule that decides whether a highlight is clamped was corrected months ago to compare the second-brightest channel against the brightest, because a tungsten bulb pins two channels and leaves the third low. That correction was applied to the trigger and never to the detector that measures where the clamp sits. So on a tungsten subject the detector reported nothing clamped, the 12-bit path fell back to a constant measured under quite different conditions, and the correction whitened a third of the frame with a noisy rim. Feathering that rim was treating the symptom, which is why it was reverted after it worked.</p>
+    <p>Teaching the detector the same rule the trigger already used took the whitened area from 33.7% of the frame to 9.5% and produced the operator's pass.</p>
+    <h3>And the thing none of it fixes</h3>
+    <p>Above the gain window the merge stops at 55 to 59 percent of the container, so a blown highlight has no roll-off for any renderer to show. Switching the same lamp to the non-HDR mode drew an unprompted "now it looks nice" from the operator. Correcting the preview can only choose what colour a flat plateau is painted. That is why the remaining fix is a constraint in the camera's ISO list rather than anything in the preview code.</p>
+  </div>
+</section>
+
+<section id="pipeline">
+  <div class="section-head"><span class="n">03</span><h2>What happens to the data</h2></div>
+  <p class="col">The defect is not a bug in one function. It is a domain mismatch that survives every stage: the sensor compresses its own tone curve into 12 bits, and nothing downstream is told. The image signal processor reads companded codes as if they were linear, which crushes the mid-tones toward magenta, and white balance then drives the clamped highlights pink.</p>
+
+  <figure>
+    <div class="svgwrap">
+      <svg viewBox="0 0 900 300" role="img" aria-labelledby="pipe-title pipe-desc">
+        <title id="pipe-title">Signal domain through the imx585 to preview pipeline</title>
+        <desc id="pipe-desc">The signal is linear from the photodiodes through the high-gain and low-gain merge. In 12-bit modes the on-sensor compander makes it non-linear, and it stays non-linear through the CSI-2 link, the front end, the back end and every preview consumer, because no stage is told about the curve. The PiSP front end contains a decompand block that is never enabled, so cinepi-raw re-renders the whole preview on the CPU instead.</desc>
+
+        <!-- stages -->
+        <g class="s-label">
+          <rect x="8" y="30" width="110" height="62" rx="4" class="s-box"></rect>
+          <text x="19" y="52" class="s-ink">HG + LG read</text>
+          <text x="19" y="69" class="s-small s-muted">WDMODE 0x10</text>
+          <text x="19" y="82" class="s-small s-muted">COMBI_EN 0x02</text>
+
+          <rect x="134" y="30" width="110" height="62" rx="4" class="s-box"></rect>
+          <text x="145" y="52" class="s-ink">merge</text>
+          <text x="145" y="69" class="s-small s-muted">EXP_TH, EXP_BK</text>
+          <text x="145" y="82" class="s-small s-accent">clamps here</text>
+
+          <rect x="260" y="30" width="110" height="62" rx="4" class="s-box"></rect>
+          <text x="271" y="52" class="s-ink">compander</text>
+          <text x="271" y="69" class="s-small s-muted">3 segments</text>
+          <text x="271" y="82" class="s-small s-muted">12-bit only</text>
+
+          <rect x="386" y="30" width="100" height="62" rx="4" class="s-box"></rect>
+          <text x="397" y="52" class="s-ink">CSI-2</text>
+          <text x="397" y="69" class="s-small s-muted">RAW12/16</text>
+          <text x="397" y="82" class="s-small s-muted">to RP1</text>
+
+          <rect x="502" y="14" width="158" height="94" rx="4" class="s-box"></rect>
+          <text x="513" y="34" class="s-ink">PiSP front end</text>
+          <rect x="513" y="42" width="120" height="19" rx="3" fill="none" class="s-accent-line" stroke-dasharray="3 3"></rect>
+          <text x="520" y="55" class="s-small s-accent">decompand: OFF</text>
+          <text x="513" y="76" class="s-small s-muted">black level, stats</text>
+          <text x="513" y="89" class="s-small s-muted">Output0 = the raw</text>
+          <text x="513" y="102" class="s-small s-muted">this camera records</text>
+
+          <rect x="676" y="30" width="100" height="62" rx="4" class="s-box"></rect>
+          <text x="687" y="52" class="s-ink">back end</text>
+          <text x="687" y="69" class="s-small s-muted">treats codes</text>
+          <text x="687" y="82" class="s-small s-muted">as linear</text>
+
+          <rect x="792" y="30" width="100" height="62" rx="4" class="s-box"></rect>
+          <text x="803" y="52" class="s-ink">preview</text>
+          <text x="803" y="69" class="s-small s-muted">HDMI, MJPEG</text>
+          <text x="803" y="82" class="s-small s-muted">thumbnail</text>
+        </g>
+
+        <!-- arrows -->
+        <g class="s-rule" stroke-width="1.5" fill="none">
+          <path d="M118 61 h14"></path><path d="M244 61 h14"></path><path d="M370 61 h14"></path>
+          <path d="M486 61 h14"></path><path d="M660 61 h14"></path><path d="M776 61 h14"></path>
+        </g>
+
+        <!-- domain band -->
+        <text x="8" y="140" class="s-small s-muted">signal domain in the 12-bit modes</text>
+        <rect x="8" y="148" width="252" height="14" rx="2" class="s-lin" opacity="0.55"></rect>
+        <rect x="260" y="148" width="632" height="14" rx="2" class="s-comp" opacity="0.55"></rect>
+        <text x="8" y="178" class="s-label s-muted">linear</text>
+        <text x="264" y="178" class="s-label s-muted">companded, and nothing downstream is told</text>
+
+        <!-- what the two defects force today -->
+        <g>
+          <rect x="8" y="200" width="884" height="38" rx="4" class="s-box"></rect>
+          <rect x="8" y="200" width="3" height="38" class="s-accent"></rect>
+          <text x="24" y="216" class="s-small s-accent">Because the decompand block is off, cinepi-raw re-renders the entire preview from that raw on the CPU,</text>
+          <text x="24" y="230" class="s-small s-accent">every frame — the cost that made the camera drop frames.</text>
+        </g>
+        <g>
+          <rect x="8" y="250" width="884" height="38" rx="4" fill="none" class="s-rule"></rect>
+          <text x="24" y="266" class="s-small s-muted">The recorded file keeps the clamp in both depths, deliberately: its job is to carry what the sensor gave,</text>
+          <text x="24" y="280" class="s-small s-muted">so a grade can decide what to do with it.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Two independent defects share one buffer. The compander explains the crushed mid-tones in 12-bit only. The merge clamp explains the pink highlights in both depths, and survives any amount of decompanding.</figcaption>
+  </figure>
+
+  <div class="col" style="margin-top:32px">
+    <h3>Why the highlights go pink</h3>
+    <p>When the merge clamps, it clamps digitally, and the colour channels converge on one code as it does. A blown area therefore arrives with two or three channels sitting on the same number. White balance then multiplies red by 1.8 and blue by 1.7 into clipping while green, already at the ceiling, cannot move. The result is pink, in the preview, the web view and the embedded thumbnail alike.</p>
+    <p>This is why the correction can only key on the channels agreeing, never on the level they agree at or on the resulting hue. A genuinely white subject was measured at the same level as a clamped one in the same frame; only the ratio between the brightest and second-brightest channel separated them, 0.659 against 0.998.</p>
+  </div>
+</section>
+
+<section id="paths">
+  <div class="section-head"><span class="n">04</span><h2>Three ways forward</h2></div>
+  <p class="col">Ranked by how many unknowns stand between here and a working camera, not by elegance.</p>
+  <div class="paths">
+    <article class="path lead">
+      <div class="rank">Rank 1 — recommended</div>
+      <h3>16-bit on the wire, log-encoded to 12</h3>
+      <dl>
+        <dt>Needs</dt><dd>cinepi-raw only: re-land the reverted preview fix. No driver, libcamera or tuning change. <span class="chip ok">confirmed</span></dd>
+        <dt>Fixes</dt><dd>No compander, no clamp anchors, no LinearizationTable, no full-frame CPU re-render. The preview correction becomes an in-place pass over clamped blocks only.</dd>
+        <dt>Costs</dt><dd>A third more link payload per row, one CPU byte-swap pass per frame of <span class="chip unknown">unknown</span> cost, and a preview that gains 20 black rows at the top. The unpacked 16-bit path also carries a standing "experimental" warning in the code that has to be retired or refuted first.</dd>
+        <dt>Gate</dt><dd>A ten-minute 4K take at 25 fps on the target drive. No soak of this combination has ever been recorded.</dd>
+      </dl>
+    </article>
+    <article class="path">
+      <div class="rank">Rank 2 — companion</div>
+      <h3>Keep the CPU render, optimise it</h3>
+      <dl>
+        <dt>Needs</dt><dd>cinepi-raw only. This is the reverted branch plus integer gating of the trigger.</dd>
+        <dt>Fixes</dt><dd>The preview in both depths. Since measured on the Pi: the correction is 10.2 ms of the stage and the bare render underneath it is 24.5 ms, so optimising the correction cannot reach the budget. Threading the render is the only lever that touches the 71% that matters.</dd>
+        <dt>Costs</dt><dd>The 12-bit path keeps a full-frame render per frame, and its per-binning anchors. The ragged boundary against a yellow subject stays open.</dd>
+        <dt>Note</dt><dd>Not an alternative to rank 1 but its prerequisite: the clean 16-bit preview exists only on this branch.</dd>
+      </dl>
+    </article>
+    <article class="path">
+      <div class="rank">Rank 3 — cheapest 12-bit win</div>
+      <h3>Move the black level instead of decompanding</h3>
+      <dl>
+        <dt>Idea</dt><dd>Above the compander's second knee the stored value differs from true linear by a <em>constant</em>, not a factor: 2455.34 at full res, 3016.21 binned. Verified algebraically from the project's own measured curve. <span class="chip ok">confirmed</span></dd>
+        <dt>Needs</dt><dd>A ClearHDR-only tuning file carrying that number as the black level. The per-camera override mechanism already exists and ships.</dd>
+        <dt>Fixes</dt><dd>Makes the ISP's own render exactly linear over the top 2.5 stops at 4K and 4.4 stops binned, at no per-frame cost and with no patch to any C++.</dd>
+        <dt>Limit</dt><dd>Only above that knee. Below it the mid-tones are still misread, and the preview's black lifts by 745 counts, so the monitor's toe goes milky.</dd>
+      </dl>
+    </article>
+    <article class="path">
+      <div class="rank">Rank 4 — research</div>
+      <h3>Decompand in the ISP front end</h3>
+      <dl>
+        <dt>Needs</dt><dd>Four upstream commits cherry-picked into the libcamera fork, a hand-authored curve per binning, a new gate in cinepi-raw and a tuning-file switch in CineMate.</dd>
+        <dt>Fixes</dt><dd>Mid-tones as well as highlights, without the CPU render, if and only if the recorded buffer is taken after the decompand block. That is <span class="chip unknown">unknown</span>.</dd>
+        <dt>Costs</dt><dd>Three hardware unknowns and a design decision. It converges on the same data domain as rank 1 and yields a file with no more information in it.</dd>
+        <dt>Trap</dt><dd>The hardware curve has 65 points. It is exact across the clamp region and wrong by up to 717 linear units at the compander's knees.</dd>
+      </dl>
+    </article>
+  </div>
+
+  <div class="col" style="margin-top:30px">
+    <h3>The finding that reorders this list</h3>
+    <p>The pink in a blown 12-bit highlight is not caused by the compander. It is the same mechanism as in 16-bit, where no compander exists: the channels converge, white balance and the colour matrix then drive the result off neutral. The constant-offset identity above proves it, because a constant offset cannot change the ratios between channels once black is subtracted.</p>
+    <p>That matters for what gets built. The full-frame CPU re-render was introduced for the crushed mid-tones, and it is the right tool for those. It is <em>not</em> needed for the blown highlights, which the far cheaper in-place correction already written for 16-bit should handle unchanged. Try that before optimising a render that may not need to run at all.</p>
+  </div>
+
+  <h3 style="margin-top:36px">What 12-bit actually buys</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Claim for 12-bit</th><th>Holds?</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Higher frame rate</td><td>No <span class="chip ok">confirmed</span></td><td>All four ClearHDR modes share one timing table, the same doubled frame length and the same line floor. The advertised rate is the same number in every cell.</td></tr>
+        <tr><td>Smaller files</td><td>Barely <span class="chip ok">confirmed</span></td><td>12.44 MB against 12.67 MB per 4K frame, the difference being 40 optical-black rows the 16-bit mode carries and the writer could crop.</td></tr>
+        <tr><td>Less memory</td><td>No <span class="chip ok">confirmed</span></td><td>The 12-bit stream is delivered in a 16-bit container, so the buffer is 16.59 MB against 16.90 MB.</td></tr>
+        <tr><td>Link headroom</td><td>Yes, unused <span class="chip probable">probable</span></td><td>A quarter less payload, but the frame rate is set by sensor timing, not by the link, at every offered frequency.</td></tr>
+        <tr><td>Working auto exposure</td><td>Yes, unused <span class="chip ok">confirmed</span></td><td>Only 12-bit keeps the statistics valid, but they are computed on companded data, and the stack forces manual exposure and fixed white balance anyway.</td></tr>
+        <tr><td>Runs on older kernels</td><td>Yes <span class="chip ok">confirmed</span></td><td>The genuine reason to keep it: 16-bit needs the 6.12.93 capture fix, and mono additionally needs a kernel patch.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:36px">What actually reaches the disk</h3>
+  <p class="col">Per 4K frame at 25 fps, including the thumbnail this camera ships, which is the full preview plane uncompressed and dominates the difference between depths.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Configuration</th><th class="num">Bytes per frame</th><th class="num">Write rate</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>12-bit compressed, today's default</td><td class="num">13 133 500</td><td class="num">328 MB/s</td><td>The baseline</td></tr>
+        <tr><td>16-bit with log-12, recommended</td><td class="num">13 363 900</td><td class="num">334 MB/s</td><td>1.8% more than today</td></tr>
+        <tr><td>16-bit with log-12, rows cropped</td><td class="num">13 133 500</td><td class="num">328 MB/s</td><td>The same as today</td></tr>
+        <tr><td>16-bit, log encode left off</td><td class="num">17 587 900</td><td class="num">440 MB/s</td><td>What ships if the setting is not changed</td></tr>
+        <tr><td>Either depth, JPEG thumbnail</td><td class="num">≈ 12 460 000</td><td class="num">≈ 311 MB/s</td><td>Still the cheapest throughput win, already implemented</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="col">These figures use a half-resolution thumbnail, which is what a live take was observed to carry. An earlier reading of the boot code said the full preview plane, which would add about two megabytes to every frame; the two disagree and that disagreement is worth settling, because it moves every row of this table. Recorded on this rig: 264 MB/s ran clean for a whole take and 355 MB/s stalled within twenty seconds. On the half-resolution figures both candidates sit under that stall, so throughput is a caution rather than the gate this page first called it.</p>
+</section>
+
+<section id="shutter">
+  <div class="section-head"><span class="n">05</span><h2>Rolling shutter</h2></div>
+  <p class="col">Nothing in the camera's documentation mentions rolling shutter, and ClearHDR changes it in a way that is currently unquantified. The sensor doubles the frame length when ClearHDR is on, at an unchanged line period. Whether that extra time is readout or blanking decides whether the skew doubles, and no source in any of the four drivers says which.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Configuration</th><th class="num">Line period</th><th class="num">If one row per line</th><th class="num">If two lines per row</th></tr></thead>
+      <tbody>
+        <tr><td>SDR 4K, fastest link</td><td class="num">6.36 µs</td><td class="num">13.7 ms</td><td class="num">—</td></tr>
+        <tr><td>ClearHDR 4K, 1782 Mbps/lane</td><td class="num">7.41 µs</td><td class="num">16.0 ms</td><td class="num">32.0 ms</td></tr>
+        <tr><td>ClearHDR 4K, 1440 Mbps/lane</td><td class="num">8.89 µs</td><td class="num">19.2 ms</td><td class="num">38.4 ms</td></tr>
+        <tr><td>ClearHDR HD, binned</td><td class="num">7.41 µs</td><td class="num">16.0 ms</td><td class="num">32.0 ms</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p>Three consequences hold whichever reading is right. <strong>The binned HD mode gives no relief</strong>, because the sensor bins after readout and still reads all 2160 rows; the driver says the readout speed is the same as 4K and the two modes share a frame length. <strong>Shooting slower does not help either</strong>: dropping from 30 to 25 frames per second adds vertical blanking and leaves the readout untouched. <strong>A faster link does help</strong>, because it shortens the line period, but ClearHDR floors that line period well above what the sensor allows in ordinary modes, so the best skew available in ClearHDR is worse than the best available outside it.</p>
+    <p>The measurement is cheap and decisive, and it settles the bandwidth question at the same time. Point the camera at a mains-powered LED, which flickers at twice the mains frequency, and count the pitch of the horizontal bands in the raw frame. At the current operating point, 100 Hz flicker gives bands 1350 rows apart if the sensor reads one row per line period, and 675 rows apart if it takes two. There is no ambiguity between those two answers.</p>
+  </div>
+</section>
+
+<section id="clamp">
+  <div class="section-head"><span class="n">06</span><h2>The merge clamp</h2></div>
+  <p class="col">Three shipped builds anchored the highlight correction on a raw code, and all three were wrong, because the code is not a sensor property. It moves with analogue gain, with the blend setting and with the scene.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Condition</th><th class="num">Plateau, raw code</th><th class="num">Above black, of full scale</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>16-bit 4K, gain code 71</td><td class="num">54 100</td><td class="num">0.777</td><td>Measured across two takes thirteen minutes apart</td></tr>
+        <tr><td>16-bit 4K, gain code 80</td><td class="num">48 600</td><td class="num">0.693</td><td>Same scene, same settings, higher gain</td></tr>
+        <tr><td>12-bit 4K, gain unrecorded</td><td class="num">≈ 3 000</td><td class="num">0.695</td><td>Decodes to within 0.3% of the code-80 figure above</td></tr>
+        <tr><td>12-bit HD, gain code 80</td><td class="num">2 392 – 2 652</td><td class="num">0.538 – 0.601</td><td>The binned mode sits lower, and nobody knows why</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p>The working model is that below the selection threshold the output follows the high-gain read, and above its saturation it follows the low-gain read scaled by an alignment factor. The ceiling is that scaled maximum. What is not known is whether the factor tracks the gain adder, whether the blend weights enter it, and whether the fall with analogue gain is a hard limit at the documented 29.1 dB sum or a continuous loss.</p>
+    <p><strong>This has since been measured, and it reframes everything above.</strong> The application note bounds the sum of sensor gain and the gain adder to between 9.6 and 29.1 dB. The sensor runs the adder at 12 dB, which caps usable gain around code 57. Swept on the camera with each gain write confirmed in the journal, the merge uses the entire container below that and collapses progressively above it. So the plateau is not a property that moves; it is the merge failing, and the numbers this page and the hardware log have been chasing for a week are all points on that one curve.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>ISO</th><th class="num">Gain code</th><th class="num">Ceiling, of 4095</th><th>What the merge is doing</th></tr></thead>
+      <tbody>
+        <tr><td>200</td><td class="num">20</td><td class="num">4095</td><td>Whole container, no plateau at all</td></tr>
+        <tr><td>400</td><td class="num">40</td><td class="num">4095</td><td>Whole container</td></tr>
+        <tr><td>640</td><td class="num">51</td><td class="num">4095</td><td>Whole container</td></tr>
+        <tr><td>799</td><td class="num">56</td><td class="num">4095</td><td>The last ISO inside the documented window</td></tr>
+        <tr><td>800</td><td class="num">60</td><td class="num">4095</td><td>First step outside it; still measured working, but on margin</td></tr>
+        <tr><td>1200</td><td class="num">71</td><td class="num">3188</td><td>Collapsing</td></tr>
+        <tr><td>1600 and above</td><td class="num">80</td><td class="num">2408</td><td>59% of the container: about a stop and a half of highlight simply gone</td></tr>
+      </tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="recipe">
+  <div class="section-head"><span class="n">07</span><h2>The recipe</h2></div>
+  <p class="col">Apply top to bottom. A line marked unknown must not ship before the measurement named beside it. Several lines here have since been worked at the camera: the preview instrumentation and cost cuts landed, the detector now measures the clamp with the same rule the trigger uses, and 12-bit passed the operator. The ISO constraint below is the substantial one still unwritten.</p>
+  <div class="recipe">
+
+    <div class="layer">
+      <h3>Sensor <span class="where">imx585 driver, cinemate-7modes</span></h3>
+      <ol class="steps">
+        <li><span class="id">1.1</span><span class="chip ok">confirmed</span><span class="body">Leave the ClearHDR register set alone. <span class="reg">WDMODE 0x10</span>, <span class="reg">COMBI_EN 0x02</span>, thresholds <span class="reg">0x0FFF</span> and <span class="reg">0</span>, compander slopes 1/64 and 1/16, knees 500 and 11500. Do not touch the unnamed ClearHDR writes; nobody knows what they do.</span></li>
+        <li><span class="id">1.2</span><span class="chip ok">confirmed</span><span class="body">Blend stays at index 5. The low indices carry the speckle and flat-pedestal defects that cost a week in August.</span></li>
+        <li><span class="id">1.3</span><span class="chip ok">confirmed</span><span class="body">Keep the sum of sensor gain and the gain adder inside 9.6 to 29.1 dB. Measured on the camera, that is <strong>ISO 200 to 799</strong>. Implement as an ISO limit in CineMate, not a driver change, and prefer a constraint to a warning: nothing in the preview tells an operator the mode has quietly stopped being an HDR mode.</span></li>
+        <li><span class="id">1.4</span><span class="chip unknown">unknown</span><span class="body">Do not move the compander knees onto the hardware curve's grid unless the front-end path is chosen and its output domain settled. Both knee anchors would need re-measuring per mode.</span></li>
+      </ol>
+    </div>
+
+    <div class="layer">
+      <h3>Image pipeline <span class="where">libcamera fork, branch cinemate</span></h3>
+      <ol class="steps">
+        <li><span class="id">2.1</span><span class="chip ok">confirmed</span><span class="body">For the recommended path, change nothing. Keep the byte-swap exemption for compressed buffers and the single black level of 3200.</span></li>
+        <li><span class="id">2.2</span><span class="chip ok">confirmed</span><span class="body">Only if the front-end path is pursued: cherry-pick the four upstream decompand commits. They apply with exactly one conflict, in the front-end lock block. Do not rebase onto upstream; a later commit there breaks this fork's 16-bit packing map.</span></li>
+        <li><span class="id">2.3</span><span class="chip ok">confirmed</span><span class="body">Only for that path: select the curve on frame width, never on the binning fields. This driver reports binning as 1 in every mode, so the obvious gate silently never fires.</span></li>
+        <li><span class="id">2.4</span><span class="chip unknown">unknown</span><span class="body">Only for that path: confirm the recorded buffer is taken after the decompand block before any tuning file becomes default. Capture one frame with the block on and one with it off, and compare the low four bits of each sample.</span></li>
+      </ol>
+    </div>
+
+    <div class="layer">
+      <h3>Capture <span class="where">cinepi-raw</span></h3>
+      <ol class="steps">
+        <li><span class="id">3.1</span><span class="chip ok">confirmed</span><span class="body">Re-land the reverted preview branch. Without it, 16-bit previews render pink below roughly ISO 1585. This is the prerequisite for everything else.</span></li>
+        <li><span class="id">3.2</span><span class="chip probable">probable</span><span class="body">Gate the trigger in integers and skip the write where the blend is zero. Measured byte-identical on x86 at less than half the cost; verify byte-identity on the Pi with one frame before merging.</span></li>
+        <li><span class="id">3.3</span><span class="chip ok">confirmed</span><span class="body">Keep the 12-bit path for the opt-in mode, and measure its binned anchor from a take at a recorded gain instead of deriving it. Before optimising its full-frame render, try the 16-bit in-place correction on 12-bit: the blown-highlight defect is the same mechanism in both depths.</span></li>
+        <li><span class="id">3.4</span><span class="chip probable">probable</span><span class="body">Optionally crop the discarded rows when writing 16-bit files: 20 at the top and 20 at the bottom, centred, since the sensor prepends optical black and appends over-read. Cropping 40 from the top would shift every frame down. Done right it makes the log-encoded file slightly smaller than today's.</span></li>
+        <li><span class="id">3.5</span><span class="chip ok">confirmed</span><span class="body">Fix two stale statements in the README: the 16-bit frame-rate ceiling, and the description of the gain adder's path through the sensor.</span></li>
+      </ol>
+    </div>
+
+    <div class="layer">
+      <h3>Camera <span class="where">CineMate settings and Redis defaults</span></h3>
+      <ol class="steps">
+        <li><span class="id">4.1</span><span class="chip probable">probable</span><span class="body">Move the boot default to the 16-bit modes. The encode resolver already maps 16-bit sources to log-12. Leave the 12-bit entries <em>enabled</em>: disabling them renumbers every ClearHDR mode, and the selected mode persists in Redis across boots, so a saved setting would silently become a different capture.</span></li>
+        <li><span class="id">4.2</span><span class="chip ok">confirmed</span><span class="body">Turn the log encode on. It ships <em>off</em> for both cameras. Without this change the new default writes 490 MB/s instead of 385, which is the difference between a plausible take and a stall.</span></li>
+        <li><span class="id">4.3</span><span class="chip ok">confirmed</span><span class="body">Hold the blend and gain-adder defaults until the sweeps below say otherwise.</span></li>
+        <li><span class="id">4.4</span><span class="chip ok">confirmed</span><span class="body">Cap the ClearHDR ISO list at <strong>799</strong>, the last value inside the sensor's combination window. Keep the 800 step selectable and land it there, tinted green, so the control stays where the operator expects and the colour says the camera is holding it. Drop 1200 and above: at 1200 the merge has already begun to collapse and by 1600 it has lost about a stop and a half of highlight range, which is what the mode was turned on to capture. <strong>Built and confirmed live on the feature branch; dev still carries an earlier 1585 ceiling that this supersedes.</strong></span></li>
+        <li><span class="id">4.5</span><span class="chip ok">confirmed</span><span class="body">Switch the thumbnail to JPEG. The camera currently seeds the full preview plane uncompressed, 2.7 MB on every frame, which is roughly a fifth of the file and the single largest lever on write throughput. The JPEG mode is already implemented and costs about 5 KB.</span></li>
+        <li><span class="id">4.6</span><span class="chip probable">probable</span><span class="body">Record the analogue gain code with every ClearHDR take. Every plateau number in the project's history that lacks one is why the clamp model still has free hypotheses.</span></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="measure">
+  <div class="section-head"><span class="n">08</span><h2>What to measure, and what each outcome means</h2></div>
+  <p class="col">In order. The first two gate the recommendation; the rest close the clamp model.</p>
+  <ol class="qlist">
+    <li><span class="q">Does a ten-minute 4K take at 25 fps sustain without dropping frames, in both depths?</span>
+      <span class="a">Run it twice, once per depth, same length and same thumbnail, or the result cannot be attributed. Today's default writes 380 MB/s and the recommendation 385, while this rig has stalled at 355. <b>A failure would indict the current default as much as the new one.</b> The cheapest fix if it fails is the JPEG thumbnail, which takes both to about 315 MB/s.</span></li>
+    <li><span class="q">Does the sensor read one row per line period in ClearHDR, or two?</span>
+      <span class="a">Shoot a mains-powered LED and count the band pitch. <b>Prediction:</b> 1350 rows apart means one row per line and a 16 ms skew; 675 rows apart means two and a 32 ms skew. The same answer settles whether 16-bit fits the link at the current rate.</span></li>
+    <li><span class="q">What does each per-frame stage actually cost on the Pi?</span>
+      <span class="a">Time the preview render, the in-place correction and the byte-swap, and log them beside the dropped-frame count. <b>Prediction:</b> the 12-bit render lands between 20 and 40 ms against a 40 ms budget, which would make it the cause of the frame drops that reverted the branch. Only x86 figures exist today.</span></li>
+    <li><span class="q">Do the blend and gain-adder writes reach the sensor at all?</span>
+      <span class="a">One register read while streaming. A write has been seen to report success while the control still read its old value, and the driver rewrites the adder at every stream start. <b>Until this is done, every plateau number rests on an assumption about what the sensor was set to.</b></span></li>
+    <li><span class="q">Does the plateau fall in one step at the documented gain bound, or continuously?</span>
+      <span class="a">Sweep ISO 200 to 1600 with the gain code logged. <b>Prediction if it is a hard bound:</b> unchanged through code 76, then a drop of about a tenth at code 80. <b>If continuous:</b> a steady fall of roughly 0.37 dB per dB of gain across the whole sweep.</span></li>
+    <li><span class="q">Does the blend setting move the plateau?</span>
+      <span class="a">Four takes at indices 0, 3, 4 and 5. Two of those indices are documented as the same weighting and differ only in one bit, which tests whether the old speckle defect was the weighting or the index. No numeric expectation exists — this one is genuinely open.</span></li>
+    <li><span class="q">Are the ragged edge pixels exact ties, or merely close?</span>
+      <span class="a">Run the supplied probe on the tungsten take. <b>Prediction:</b> genuinely near-equal rather than tied, which would mean a tolerance in code space cannot help and the matte must be feathered instead.</span></li>
+  </ol>
+</section>
+
+<section id="vendor">
+  <div class="section-head"><span class="n">09</span><h2>If a vendor recipe can be obtained</h2></div>
+  <p class="col">These are the questions whose answers would turn the experiments above into confirmations. Ask for register-level statements for the sensor in built-in combination mode, at both output depths.</p>
+  <ol class="plain col">
+    <li>The merge formula: how the combined output is formed from the two reads as a function of the thresholds, the blend weights and the gain adder, including where the black pedestal enters and what sets the ceiling.</li>
+    <li>Which read the gain adder scales, and whether the high-gain path carries a fixed conversion-gain step in this mode.</li>
+    <li>What happens when the gain sum leaves the documented 9.6 to 29.1 dB window: a validity limit, a clip, or undefined.</li>
+    <li>Whether the sensor clips or wraps when the aligned value exceeds the 16-bit container. One vendor's own driver warns that bright areas can render black, and nobody has explained it.</li>
+    <li>Why the binned plateau sits lower, and whether 12-bit compressed output in the binned mode is supported at all. Two drivers read the application note as saying it is not, while this camera records usable data from it.</li>
+    <li>The exact knee placement in stored codes, since the measured curve sits a fraction of a code above the register value, and whether the second knee carries the same offset.</li>
+    <li>How many line periods one merged output row occupies on the link, which would turn the bandwidth question from inference into arithmetic.</li>
+    <li>The function of the ClearHDR-only registers no public driver names, and whether any of them sets an output ceiling.</li>
+  </ol>
+  <p class="col" style="margin-top:22px">For the Raspberry Pi side, three questions would remove the front-end path's remaining unknowns: whether the recorded output is taken after the decompand block, how the hardware interpolates between the 65 curve points, and whether the black-level block clamps values below black when its input and output levels are equal.</p>
+</section>
+
+<div class="footer col">
+  <p>Confidence labels follow this project's own rule: a diagnostic that cannot come out wrong is not evidence. Three of the four wrong turns in this investigation came from reasoning past the evidence rather than from bad measurement, which is why every unknown here names its measurement instead of an argument.</p>
+</div>
+
+</div>
