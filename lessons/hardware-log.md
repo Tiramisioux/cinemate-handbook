@@ -3137,3 +3137,45 @@ cache-hostile histogram writes — and a fix was built and shipped before anythi
 The measurement then read **0.38 ms/frame**: about 1% of the frame budget, and never the
 cause. The instrumentation that settled it took ten minutes and should have come first. A
 story that explains the evidence is not evidence.
+
+## 2026-09-15 — make-release-image.sh re-arms the RP1 stale-config guard on the way out
+
+**Tested:** code read on both sides after the RP1 investigation above, not a separate hardware
+run. Recorded here because it explains that entry's trigger and predicts its recurrence.
+
+**Why:** `scripts/make-release-image.sh` swaps `/boot/firmware/config.txt` to stock, images the
+card, then restores the operator's copy in `ri_restore()` using
+
+    install -o root -g root -m 644 "$RI_STASH_DIR/config.txt" "$BOOT_CONFIG"
+
+`install` without `-p` does not preserve timestamps, so the restored file carries the *current*
+time. Content is byte-identical and the script's own comment is accurate about that — but
+`rp1_regime.py` does not look at content. It compares config.txt's **mtime against boot time**,
+because on kernel 6.12.93 `clk_sys` reads ~333 MHz in both regimes and can no longer
+discriminate.
+
+So every completed image build leaves config.txt looking edited-since-boot, which drops the
+ceiling from 580 to the stock 380 MPix/s, which caps 3840×2200 16-bit at 21 fps, which removes
+that mode from the resolution ladder at 25 fps. Nothing in the GUI says so.
+
+This is almost certainly what set the 20:45:30 mtime in the entry above — an image build or a
+`--restore-only`, seven minutes after the 20:38:01 boot.
+
+**What to do:** reboot after any image build before shooting wide 16-bit. `--restore-only`
+counts.
+
+**Candidate fixes, in order of preference:**
+1. `install -p` (or `touch -r` against the stash copy) in `ri_restore()`, so a byte-identical
+   restore does not look like an edit. Cheapest, and correct — the file genuinely was not
+   changed.
+2. Have `rp1_regime` compare content rather than mtime — hash the overlay-relevant lines at
+   boot and compare. More robust, more work.
+3. Surface "overclock pending reboot" in the GUI beside the toggle. Worth doing regardless of
+   1 and 2, because a mode silently leaving the ladder with the explanation in the journal is
+   the part that actually cost the hour.
+
+Option 1 alone does not close the general case — the settings-editor toggle still writes
+config.txt for real — but it removes the one path that trips the guard while changing nothing.
+
+**Confirmed by:** `ri_restore()` read at cinemate `590784ea`; `rp1_regime.py`'s own comments on
+why the `clk_sys` veto was removed; the mtime/boot-time pair quoted in the entry above.
