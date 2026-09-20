@@ -3224,3 +3224,44 @@ in use.
 **Confirmed by:** operator at the rig, 2026-09-20, dials confirmed working while the pane read
 absent; plus the measured ACK/NACK ratios above and the 22:33:07 poll captured against a
 simultaneous `i2cdetect`.
+
+## 2026-09-20 — "Download selected" confirmed working, and the stale-process trap that made it look broken
+
+**Tested:** the operator's camera at the rig, cinemate `dev` @ `f93a4b2` (PRs #201–#204
+merged), downloading two selected takes from the settings editor's RAW pane over plain HTTP.
+
+**Worked:** the combined-zip download, confirmed twice. A verification run earlier the same
+evening produced a 1.02 GB archive of two takes (39 + 92 DNGs, 131 entries, `testzip()` clean,
+each take under its own top-level folder), and the operator then confirmed it from their own
+browser at the rig. Before this change the button was disabled outright for more than one take
+on any browser without the File System Access API — which is every phone, Safari, and anything
+reached over the hotspot.
+
+**Did not work, and why it is worth recording:** between those two successes the same button
+produced a 207-byte file named `cinemate-takes.zip` containing Flask's HTML "The requested URL
+was not found on the server". Nothing was wrong with the feature. The camera's working tree had
+been pulled to the merged `dev`, but `cinemate-autostart` was **not restarted afterwards**, so
+the running Python process was still the pre-merge app and had no such route.
+
+Three things make this worth remembering, because each one is a false lead:
+
+- **A `git pull` on the camera changes nothing that is running.** The route existed in the file
+  on disk (`grep` found it) while the process serving requests did not have it. Checking the
+  source on the camera is not checking what the camera is doing.
+- **The download filename is the tell.** A successful download is named by the camera's
+  `Content-Disposition` and carries a timestamp (`cinemate-takes-20260920-221339.zip`); a failed
+  one falls back to the `download` attribute the page asked for (`cinemate-takes.zip`). Two
+  files in the same folder differing only by a timestamp is the signature of one success and
+  one failure, not two attempts.
+- **Distinguish a missing route from a route saying no.** `curl` the endpoint and read the
+  body: Flask's HTML 404 means the URL is not registered, while this codebase's own
+  `{"ok": false, "message": "..."}` means the route ran and answered. Probing the single-take
+  route returned JSON and the combined route returned HTML at the same moment, which located
+  the fault in one command. Status code alone cannot tell these apart — both are 404.
+
+This is the server-side twin of the page-caching entry from 2026-09-13: there the browser held
+an old page against a new server, here the browser held a new page against an old server. Both
+present as a feature that "used to work".
+
+**Confirmed by:** operator at the rig, 2026-09-20, before and after the restart; plus the
+verification run's archive listing and the HTML-vs-JSON probe above.
