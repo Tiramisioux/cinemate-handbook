@@ -9,6 +9,20 @@ that needs to know what is attached does not rediscover it. The implementation l
 `src/module/app/hardware_probe.py`, its route in `src/module/app/settings_editor.py`, and its
 tests in `_test/test_i2c_hardware_pane.py`.
 
+## Presence is a one-byte ACK, never an initialisation — except where that answers nothing
+
+**Correction, 2026-09-20, measured on the camera.** The rule below holds for the Grove HAT,
+the RTC, the OLED and the CFE hat. It does **not** hold for the Adafruit seesaw quad rotary:
+that part answers a register read, not a bare receive-byte, and NACKs the latter about half
+the time. Against a fitted, working board, `read_byte(0x49)` answered 26 of 60 attempts while
+a STATUS/HW_ID register read answered 38 of 40 with the real id (`0x87`). The pane therefore
+reported a present board missing on roughly every other refresh, and it read as flaky
+hardware. The quad rotary is now answered from the running driver's own state when it has one
+(no bus traffic at all, reported as `driver-confirmed`) and by a register read otherwise —
+the module's one deliberate write, documented in place. See `../lessons/hardware-log.md`,
+2026-09-20. Two of the 40 register reads returned `0x00`, so a probe must require a known
+hardware id rather than treating "no exception" as presence.
+
 ## Presence is a one-byte ACK, never an initialisation
 
 **A probe opens the bus, does a one-byte read at an address, and closes the handle — nothing

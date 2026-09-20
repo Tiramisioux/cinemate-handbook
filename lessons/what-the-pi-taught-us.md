@@ -228,6 +228,36 @@ knowable at a desk. The fix (guarding that loop, mirroring a pattern that alread
 correctly a few hundred lines away in the other repo) was later hardware re-verified against
 the exact same fault injection and confirmed to close it.
 
+### A workaround that does two things credits the wrong half (2026-09-20)
+
+"The preview is black until I change resolution and back" was read for months as evidence
+about the browser. Changing resolution reloads the document **and** relaunches cinepi-raw.
+Three independent faults were eventually found behind that one sentence — a page-side reset
+that issued no request, a browser refusing a cross-port subresource, and the camera's MJPEG
+server out of worker threads — and each is defeated by one half or the other of that same
+workaround. Two of the three were diagnosed wrongly first, both times by crediting the half
+that happened to match the current theory.
+
+**The rule:** when a symptom clears after an action that does several things, name which of
+them you are crediting, and find an experiment that separates them. Here it was one command —
+`curl` the stream from another machine. Frames arriving while the browser shows nothing puts
+the fault above the camera; nothing arriving puts it below.
+
+### The cheapest primitive can fail to ask the question at all (2026-09-20)
+
+The i2c pane detects every peripheral with a one-byte read, deliberately: no writes, no driver
+initialisation, safe to re-run during a take. For the Adafruit seesaw that primitive is simply
+wrong — it answers a *register* read, and NACKs a bare receive-byte about half the time.
+Measured against a board that was fitted, working and being turned: 26 of 60 reads answered,
+while a proper register read answered 38 of 40 with the real hardware id. The pane had been
+calling a present board missing on roughly every other refresh for as long as it had existed,
+and it looked exactly like flaky hardware.
+
+**The rule:** a probe that is cheap and uniform is a design virtue right up until one device
+does not implement the thing being probed. When a presence check disagrees with a device that
+is visibly working, suspect the question before the hardware — and prefer an answer the driver
+already has over asking the bus again.
+
 ## Recording new experiences here
 
 Every hardware session — a deterministic verification run, an ad hoc debugging session, or a

@@ -10,10 +10,46 @@ screen at `/?xp=1` in an iframe, so a trap in `template.html` is a trap on both 
 | Trap | Symptom | Invisible to |
 |---|---|---|
 | MJPEG `<img>` accepted-and-silent | preview black from boot, recovers only on a resolution change | every event handler — nothing fires |
+| A cross-port `<img>` the browser refuses outright | identical black preview, and **no retry can fix it** | every event handler, and every reconnect |
 | identical-URL `src` reset while a request is in flight | every recovery path runs on time and reconnects nothing | reading the code; the page-side log looks perfect |
 | No iOS Fullscreen API for an `<img>` | button flashes on tap, does nothing | desk browsers, which all have the API |
 | `height: 100%` on a phone | bottom row sits behind the browser toolbar, unscrollable | device emulation — it has no toolbar |
 | Grid automatic minimum size | preview squeezed to 0px, drawer never scrolls | reading the CSS; only measured boxes show it |
+
+## One black preview, three unrelated causes — read this before diagnosing it
+
+**Added 2026-09-20, after two of the three were found on the camera.** This page originally
+described the black preview as a single browser-side defect. It is not. Three independent
+faults produce a preview that is black on a fresh load and comes back when you change
+resolution and back, and *each one is invisible in exactly the same way*. Confirm which one
+you have before fixing anything.
+
+| Cause | Where | How to tell it apart |
+|---|---|---|
+| Identical-URL `src` reset issues no request | the page | the reconnect runs and the server sees no new connection |
+| The browser refuses the cross-port subresource | the browser | the same `<img>` shows a picture from a same-origin path at the same moment |
+| cinepi-raw's MJPEG server is out of workers | the camera | `ss -ltn '( sport = :8000 )'` shows a non-zero `Recv-Q`; `curl` gets nothing either |
+
+Why "change resolution and back" appears to fix all three is the trap: it does two things at
+once. It reloads the whole document (which defeats the first two) *and* it relaunches
+cinepi-raw (which defeats the third). Crediting it to either half alone has now produced two
+wrong diagnoses in this project.
+
+The cheapest discriminator, and it takes one command: **`curl` the stream from another
+machine.** If `curl` gets frames while the browser does not, the camera is fine and the fault
+is in the browser or the page. If `curl` gets nothing either, it is the server.
+
+**The cross-port refusal is the one this page missed for longest.** Measured on the camera:
+the same `<img>`, in the same page, at the same moment, reported `naturalWidth` 0 for
+`http://<host>:8000/stream` and 1280x720 for `/preview/0/stream`. A refused subresource fires
+no `error`, no `load`, nothing — so every recovery path below was retrying a request the
+browser was never going to make. **`main/routes.py`'s relay is the fix**, and the page now
+latches onto it after the first failure to produce a frame. Note what this means for the rest
+of this page: redundant *detection* is worthless when the single *action* they share cannot
+work. That was already the lesson of the identical-URL reset; it repeated with a different
+mechanism.
+
+See `../lessons/hardware-log.md`, 2026-09-20, for both measurements.
 
 ## An MJPEG `<img>` can be accepted and then silent, and that fires nothing
 
