@@ -3265,3 +3265,47 @@ present as a feature that "used to work".
 
 **Confirmed by:** operator at the rig, 2026-09-20, before and after the restart; plus the
 verification run's archive listing and the HTML-vs-JSON probe above.
+
+## 2026-09-20 — the black preview is the MJPEG server running out of worker threads, not the browser
+
+**Tested:** the operator's camera at the rig, cinemate `dev` @ `f93a4b2` (which already carries
+PR #202's browser-side stream-reload fix), cinepi-raw `dev` @ `3056fea`. Operator's report,
+unchanged after #202 merged and deployed: a freshly loaded `http://cinepi.local:5000` shows a
+black preview, and changing resolution and back brings the picture up. Operator's browser is
+Safari. Opening `http://cinepi.local:8000/stream` directly in that same browser also produced
+nothing.
+
+**Did not work, with the numbers:** while the operator was seeing black, the stream port's
+listening socket had **9 connections sitting in the accept queue**, plus 5 established and
+2 in `CLOSE-WAIT` — the peer had closed and the server had not. `mjpegPreviewStage::Configure()`
+starts the streamer with **8 worker threads** (`streamer_->start(port_, 8)`). A fresh client in
+that state received **0 bytes in 6 seconds**. This is textbook accepted-and-silent: the kernel
+completes the TCP handshake because the backlog is 4096, and no worker is ever free to speak
+HTTP.
+
+**Worked:** restarting the camera process cleared it completely — `Recv-Q` back to 0, and a
+fresh client received frames immediately. That is precisely why changing resolution "fixes" the
+preview: a resolution change relaunches cinepi-raw, which rebuilds the streamer.
+
+**Why:** worker exhaustion in the MJPEG server, with connections that are never reaped. The
+`CLOSE-WAIT` pair is the signature. Once all 8 workers are consumed the server accepts every
+new client and serves none of them, permanently, until the process restarts.
+
+**What this corrects:** PR #202 (and the browser-traps page's whole account of the black
+preview) located this symptom in the browser — an identical-URL `src` reset that issued no
+request. That defect was real and is fixed, and this entry does not retract it. But it was not
+the cause of *this* symptom, and no browser-side retry can be: every reconnect lands back in the
+same exhausted accept queue. When a recovery mechanism is added because a symptom persists, check
+that the layer being retried is capable of answering at all.
+
+**Not established, and it matters for the fix:** what actually leaks a worker. Reproduction from
+this Mac failed twice — 10 connections opened and closed cleanly, then 14 aborted mid-stream
+(the exact pattern PR #202's teardown generates), left `Recv-Q` at 0 and a fresh client served
+normally. So ordinary clean closes and mid-stream aborts are reaped correctly. The leak is
+something a real browser does and `curl` does not; Safari's connection handling is the obvious
+suspect but is unproven. Do not assume the fix is simply "more workers" until that is settled —
+a leak with 8 workers is a leak with 64.
+
+**Confirmed by:** operator at the rig, 2026-09-20 (black on a fresh load, nothing on the direct
+stream URL, picture after a resolution change); plus the socket-state capture, the 0-bytes-in-6s
+measurement before the restart and 200-bytes-immediately after it.
