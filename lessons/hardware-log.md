@@ -3179,3 +3179,48 @@ config.txt for real — but it removes the one path that trips the guard while c
 
 **Confirmed by:** `ri_restore()` read at cinemate `590784ea`; `rp1_regime.py`'s own comments on
 why the `clk_sys` veto was removed; the mtime/boot-time pair quoted in the entry above.
+
+## 2026-09-20 — the i2c pane's quad-rotary presence answer is a coin flip, not a flapping board
+
+**Tested:** the operator's camera at the rig, quad rotary board fitted and in use, cinemate
+`dev` @ `f93a4b2`, driver running and polling the board at 10 Hz. Operator's report: the i2c
+pane shows the quad rotary encoder "positive for a short while and then negative even if it is
+connected." Three sources sampled against each other at the same moments: the pane's own
+endpoint `/settings-editor/api/hardware`, `i2cdetect -y 1`, and the driver's log.
+
+**Worked:** the board itself, throughout. `i2cdetect` showed `0x49` answering at every check,
+including at the exact second the pane reported absence. The driver never lost it — no
+`Quad rotary controller I/O error`, no `Lost the quad rotary controller`, and the operator
+confirmed the dials kept changing values while the pane said the board was not found. The
+`quad_rotary_controller` log shows only clean initialisations.
+
+**Did not work:** the pane's presence probe. Polling the endpoint every 15 s caught it flipping
+to `present: false` at 22:33:07 while `i2cdetect` at that same moment showed `0x49` present.
+The operator, checking the endpoint from their own browser moments later, got `present: true` —
+so the pane was faithfully rendering an answer that is itself unstable, not showing a stale one.
+
+**Why:** `hardware_probe._ack()` decides presence with a bare SMBus receive-byte
+(`smbus2.SMBus(1).read_byte(0x49)`). An Adafruit seesaw does not reliably ACK an unsolicited
+receive-byte; it answers a *register* read. Measured on the live rig, 60 consecutive attempts
+against the present, working board:
+
+| Primitive | Result |
+|---|---|
+| `read_byte(0x49)` — what the pane uses | 26 ACK, 34 NACK (all `EREMOTEIO`, errno 121) |
+| seesaw register read — write `[0x00, 0x01]` (STATUS/HW_ID), 8 ms, read 1 byte | 38 of 40 OK, returning `0x87` (ATtiny8xx seesaw) |
+
+So every 30-second pane refresh has had roughly a coin's chance of declaring a fitted board
+missing. This is the failure mode the probe's own design note did not anticipate: the module
+deliberately avoids the drivers and uses "the cheapest primitive that exists", and for this
+one device that primitive does not answer the question. Note also that two of the 40 register
+reads returned `0x00` rather than `0x87`, so a fixed probe must require a known seesaw ID
+(`0x55` SAMD09 / `0x87` ATtiny8xx) rather than treating "no exception" as presence.
+
+Not yet established: whether the NACK rate is intrinsic to the seesaw or is contention with
+the driver's own 10 Hz polling. The two are distinguishable by repeating the measurement with
+`input_peripherals.quad_rotary_controller.enabled` set false, which was not done — the rig was
+in use.
+
+**Confirmed by:** operator at the rig, 2026-09-20, dials confirmed working while the pane read
+absent; plus the measured ACK/NACK ratios above and the 22:33:07 poll captured against a
+simultaneous `i2cdetect`.
