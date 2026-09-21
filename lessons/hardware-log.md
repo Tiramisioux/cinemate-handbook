@@ -38,6 +38,54 @@ recorded finding, the same distinction `PI-VERIFICATION-QUEUE.md` drew between "
 
 ## History (seeded from the 2026-08 system review)
 
+## 2026-09-21 — binned ClearHDR will not take a cropped window: the boundary is binning, not crop direction
+
+**Tested:** the imx585 aspect-ratio crop family from `experimental-cropped-modes-v2`, against
+cinepi-raw and cinemate on `feature/crop-modes-all`, kernel 6.12.93+rpt-rpi-2712, colour imx585 on
+cam0, overlay at `link-frequency=1039500000` (2079 Mbps/lane). Four takes, each launched with an
+explicit `--mode` and each with the live mode confirmed from cinepi-raw's own selection log and from
+the recorded DNG's tags before it was judged. Frames judged with
+`development/imx585-mode-matrix-handoff/discriminator.py` plus direct row-mean inspection.
+
+**Worked:**
+- Every **unbinned** windowed RAW16 ClearHDR mode records a real image, including horizontally
+  cropped ones: 2880x2200 at 1x1 gave 2200 of 2200 distinct rows, about 6100 unique values, and a top
+  single value holding 0.26% of pixels. 3840x1648 at 1x1 likewise.
+- The same geometry in 10-bit records normally: 1440x1080 windowed 2x2 SDR was real.
+- 3840x1608 SDR 1x1, 2.39:1, real. The 1440x1080 1x1 crop reports 136.80 fps, which is
+  74.25e6/(472 x 1150) exactly, so the frame-rate arithmetic is confirmed on silicon.
+
+**Did not work:** every **windowed 2x2** RAW16 ClearHDR mode returns the black-level pedestal instead
+of an image. 1440x1100, horizontally cropped: 99.5% of pixels at 3200, 11 distinct rows of 1100.
+1920x824, cropped vertically only: 98.8% at 3200, a rigid four-row byte period, and row means flat at
+exactly 3200.0 from row 10 to the end.
+
+**Why:** not crop direction, which was the standing guess and is refuted by the table above. The
+sensor will not accept a *windowed* readout in *binned* ClearHDR. The 1920x824 frames say it plainly:
+the first ten rows, which are the binned optical-black rows, carry real ramping values, and everything
+after them is exactly the pedestal, so the sensor emitted its optical black and then produced no
+recording rows. The shipped non-windowed 2x2 RAW16 mode works, so windowing is the trigger; 10-bit at
+the same window works, so ClearHDR is the other half. This confirms what the driver branch's own
+comment had suspected without isolating it.
+
+Consequence: in 16-bit ClearHDR every aspect ratio is still available unbinned at full resolution, and
+the binned half of the 16-bit family does not exist. 12-bit and 10-bit keep both binnings. WP-585-8
+withdraws those thirteen entries.
+
+**A method note worth more than the finding.** `discriminator.py` returned REAL for the 1920x824
+fill. Its own numbers said otherwise: 98.8% of pixels at the pedestal, 51% distinct rows, a 0.99
+period match. The agent overrode the tool's verdict on those numbers and was right, which is the same
+false-negative trap recorded in `LIVE-RESULTS-2026-08-27.md` §5. **Read the discriminator's numbers,
+not its verdict**, and treat "distinct rows just above half" as a fill rather than a pass.
+
+**Also settled:** the receiver logs `DPHY: Datarate 2079 Mbps out of range` only once something
+actually streams. A boot that has only run `--list-cameras` will look clean, so silence there is not
+evidence about the link.
+
+**Confirmed by:** four hardware takes in workflow runs `wf_561b99c6-0e8` (gate G3) and
+`wf_99d5a273-11c` (the three-case diagnostic), with frames retained under
+`development/imx585-mode-matrix-handoff/case-*`. Not yet reviewed by the operator.
+
 The entries below predate this file and are backfilled from `system-review/PI-RESULTS-2026-08-24.md`
 and `PI-RESULTS-2026-08-25.md` in the `cinemate` repo, condensed to this format. Full
 ran/observed/verdict detail for each lives in `system-review/PI-VERIFICATION-QUEUE.md`.
