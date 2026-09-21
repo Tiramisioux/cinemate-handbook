@@ -38,6 +38,28 @@ recorded finding, the same distinction `PI-VERIFICATION-QUEUE.md` drew between "
 
 ## History (seeded from the 2026-08 system review)
 
+## 2026-09-21 — the binned-ClearHDR withdrawal is confirmed on the camera
+
+**Tested:** WP-585-8 on `experimental-cropped-modes-v2`, DKMS-rebuilt and loaded after a reboot
+(loaded and on-disk srcversion both E4620B61D5758539E5A5AD6, so the running module is the rebuilt
+one). Same rig as the entry above.
+
+**Worked:** the 16-bit ClearHDR family now offers 15 modes, of which exactly one is binned — the
+non-windowed 1920x1100 that always worked — and fourteen are unbinned crops. A take in one of those
+unbinned crops, 3840x1648 at 2.39:1, records a real image: 1648 of 1648 rows distinct, 3865 unique
+values, the top single value holding 0.73% of pixels, period match 0.39. Compare the failures it
+replaces, which sat at 98.8-99.5% on the pedestal.
+
+**Did not work:** nothing in this check.
+
+**Why:** this is the other half of the entry above. Binned ClearHDR will not take a cropped window,
+so those thirteen entries are gone from the table; unbinned crops are unaffected and every aspect
+ratio is still reachable in 16-bit at full width.
+
+**Confirmed by:** orchestrator, directly, after the operator rebooted the camera: the mode listing
+was parsed programmatically and the take judged with discriminator.py, reading its numbers rather
+than its verdict as the entry above requires.
+
 ## 2026-09-21 — binned ClearHDR will not take a cropped window: the boundary is binning, not crop direction
 
 **Tested:** the imx585 aspect-ratio crop family from `experimental-cropped-modes-v2`, against
