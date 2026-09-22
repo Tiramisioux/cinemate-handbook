@@ -3379,3 +3379,159 @@ a leak with 8 workers is a leak with 64.
 **Confirmed by:** operator at the rig, 2026-09-20 (black on a fresh load, nothing on the direct
 stream URL, picture after a resolution change); plus the socket-state capture, the 0-bytes-in-6s
 measurement before the restart and 200-bytes-immediately after it.
+
+## 2026-09-22 — the imx283 crop-mode driver's first hardware run: a kernel Oops on the first S_FMT
+
+**Tested:** imx283 on a CM5 Lite (kernel 6.12.93+rpt-rpi-2712), driver branch
+`cinemate-modes` @ 773c5bb, cinepi-raw `dev`, cinemate `dev`. First time any imx283 had been
+attached to this branch — its build gate had never run anywhere.
+
+**Worked:** DKMS built and installed; the sensor probed and registered.
+
+**Did not work:** the kernel oopsed the moment anything opened the camera.
+
+```
+WARNING: ... at drivers/media/v4l2-core/v4l2-subdev.c:1717
+         __v4l2_subdev_state_get_crop+0x38/0x90 [videodev]
+lr : imx283_set_pad_format+0x1fc/0x2b0 [imx283]
+Unable to handle kernel NULL pointer dereference at virtual address 0
+Internal error: Oops: 0000000096000045 [#1] PREEMPT SMP   Comm: cinepi-raw
+Code: ... (a9000c02)        <- stp x2, x3, [x0], x0 = 0
+```
+
+**Why:** f162db7 added an unconditional
+`*v4l2_subdev_state_get_crop(sd_state, fmt->pad) = mode->crop;` to `imx283_set_pad_format()`.
+This driver has no active state to write into — it still uses the legacy model, where
+`internal_ops.open` seeds the per-file TRY state and `v4l2_subdev_init_finalize()` is never
+called, so `sd->active_state` is NULL and the core hands an ACTIVE `S_FMT` to the op with
+`sd_state == NULL`. `x3` held `0x0000087000000f00`, the 3840x2160 rectangle being stored.
+
+The imx585 escapes this only because it *does* call `v4l2_subdev_init_finalize()`. Moving the
+store into the TRY branch fixes it; the ACTIVE crop never needed storing, because
+`imx283_get_selection()` answers ACTIVE from `imx283->mode->crop`.
+
+**The general lesson:** an unconditional write through a V4L2 state pointer is a bet that the
+driver was modernised. Check for `v4l2_subdev_init_finalize()` before making it.
+
+**Confirmed by:** dmesg on the CM5 before the fix (1 oops) and after (0), operator at the rig.
+
+## 2026-09-22 — HTRIMMING_START is honoured: centring the imx283's UHD window corrupts the frame
+
+**Tested:** `IMX283_MODE_1C` (3936x2176, 10-bit UHD) with `.crop.left` at its shipped 236 and
+at the centred 856, on the CM5.
+
+**Worked:** 236 — a clean picture. `.crop.top` changed from 0 to the centred 852 with no
+effect on the image at all.
+
+**Did not work:** 856 streamed a frame whose left portion was a grey ramp and whose right two
+thirds were vertical colour noise.
+
+**Why:** `.crop.left` is written to `HTRIMMING_START` for **every** mode, so it is not
+metadata — it moves the real window. Drive mode 0x30 does address the array differently from
+the all-pixel modes, which is exactly what commit 95183c8's comment claimed while citing
+nothing. `.crop.top` *is* metadata for this entry, because the arbitrary vertical-crop path in
+`imx283_start_streaming()` is Mode-0-only and 0x30 never sets the `VCROP_EN` bits — which is
+why one of the two could be corrected and the other could not.
+
+The defect being fixed was real: `.top = 0` named a row inside the optical black
+(`imx283_active_area` starts at `.top = 108`), so libcamera reported a **negative** analogCrop
+origin, `(196, -108)`. After the fix: `(196, 744)`.
+
+**What this corrects:** an adversarial reviewer had flagged the 236→856 change as unevidenced
+and it was overridden on the argument that "every branch of the question wants 856". The
+branch that was dismissed — 0x30 hardwiring its own window — is the real one. A reviewer
+objecting that a change has no evidence is not answered by an argument; it is answered by
+evidence.
+
+**Confirmed by:** operator at the rig ("now i got this in UHD mode", with a frame grab), and
+the clean picture after reverting. Whether the resulting window is genuinely off-centre on the
+sensor is still open — see `open-threads.md`.
+
+## 2026-09-22 — a sensor with no ClearHDR was shown a full set of ClearHDR modes
+
+**Tested:** cinemate `dev` against the imx283, reading `GET /settings-editor/api/sensor-modes`.
+
+**Did not work:** the endpoint returned **42 modes for a sensor that has 21**, and the
+settings page drew "CLEAR HDR · 12-BIT · 1×1" group headers on a sensor with no HDR at all.
+
+**Why:** cinemate probes twice, plain and `--hdr sensor`, and merges. On the imx283 the two
+probes are **byte-for-byte identical** — the driver ignores `--hdr sensor` entirely. The merge
+was supposed to collapse that, and its own docstring promised it did, but could not:
+`_normalize_hdr_probe_modes()` promotes every mode from the HDR probe to `hdr=True` and
+**never reads its `base_modes` argument**; `_mode_timing_key()`, documented as precisely the
+comparison for this case, had **zero call sites**; and `_mode_key()` — what the merge dedupes
+on — includes `hdr`, so a promoted mode can never match a plain one.
+
+This affects every sensor whose driver ignores `--hdr sensor`, so it was a stock-sensor defect
+(imx477, imx296) too, not just an imx283 one.
+
+**The general lesson:** a parameter that is accepted and never read, and a helper with no call
+sites, are the same smell. Both were present, both were documented as the mechanism, and the
+mechanism had never been wired up.
+
+**Confirmed by:** operator ("note that it does not have any clear hdr modes"), the two
+identical probe outputs in `src/logs/system.log`, and 21 rows / 0 HDR in the payload after the
+fix.
+
+## 2026-09-22 — one mode lost its whole geometry annotation to a range check copied from another sensor
+
+**Tested:** `cinepi-raw --list-cameras` against the imx283, all 21 modes.
+
+**Did not work:** exactly one mode, 1856x1220, came out as a bare
+`[60.36 fps - (0, 0)/5472x3648 crop]` with no `binning NxN; mode-crop (x,y)/WxH` clause, while
+the other twenty carried theirs. In cinemate's mode table it alone had `binning_x: null`.
+
+**Why:** `core/driver_mode_metadata.hpp` rejected any candidate whose "Mode Binning" control
+read outside `1..2`, on the stated grounds that the imx585 "and its imx283 equivalent only ever
+program 1x1 or 2x2". True of the imx585; never true of the imx283, whose `IMX283_MODE_3` is a
+3x3 readout, is not experimental, and is listed. The bound was the imx585 control's own
+`.max = 2` copied into a reader meant to serve any driver implementing the five-control
+contract by name — and because a rejected candidate drops the **whole** annotation rather than
+one field, it read as a driver gap and was investigated as one.
+
+Separately, `IMX283_MODE_2` advertised `binning 1x1` for a 2x2-binned readout: it omitted
+`.hbin_ratio`/`.vbin_ratio`, and because the control's `.min = 1`, `__v4l2_ctrl_s_ctrl()`
+clamped the missing 0 up to a plausible 1. A silent clamp turns a missing value into a wrong
+one.
+
+**The general lesson:** when a shared reader validates a value, check whether the bound
+describes the contract or the first sensor that implemented it. And a `.min` that is not zero
+will hide an unset field rather than expose it.
+
+**Confirmed by:** the annotation appearing after the bound was widened — `binning 3x3;
+mode-crop (40,108)/5472x3648` for 1856x1220, and `binning 2x2` for 2784x1828.
+
+## 2026-09-22 — the imx283 puts its optical black on the left and the bottom, and every DNG showed it
+
+**Tested:** DNGs pulled from the CM5 in two modes and measured pixel by pixel.
+
+**Did not work:** the operator's takes had a black band down the left edge. Every imx283 take
+ever pulled off this sensor had it.
+
+**Why:** the transport frame carries the sensor's optical black, and the DNGs had **no**
+`ActiveArea`, `DefaultCropOrigin`, `DefaultCropSize` or `MaskedAreas` tag, so every renderer
+drew the shielded pixels as picture. Measured:
+
+| Mode | Black columns | Zero rows | Picture |
+|---|---|---|---|
+| 3936x2176 10-bit (MODE_1C) | 0–95, leading | 2160–2175, trailing | 3840x2160 at (96, 0) |
+| 2784x1828 12-bit (MODE_2)  | 0–47, leading | 1824–1827, trailing | at (48, 0) |
+
+The columns sit at exactly the black level with a standard deviation of ~1–2 across every row
+regardless of scene, while the adjacent picture columns vary by 20+. That is what identifies
+them as shielded rather than dark.
+
+This layout — **columns leading, rows trailing** — is neither of the layouts the stack already
+knew about. The imx585's RAW16 modes split their padding evenly top and bottom and have none
+horizontally, and cinepi-raw's own comment asserted the imx283's black rows "sit entirely at
+the top", which is the wrong edge. It is not derivable from the sizes, which is why the driver
+now reports it: `Mode Active Left` / `Mode Active Top`, the picture's origin inside the frame,
+in that frame's own pixels — exactly what DNG's `ActiveArea` wants.
+
+**The general lesson:** optical black is not a crop and removing it costs no picture. 96 + 3840
+= 3936 exactly; there is nothing on the right to trim to "balance" it, and trimming a matching
+96 from the right would throw away real image.
+
+**Confirmed by:** operator ("there is black to the left"), the per-column measurements above,
+and a fresh UHD DNG after the fix carrying `ActiveArea 0 96 2160 3936`, `DefaultCropOrigin 96
+0`, `DefaultCropSize 3840 2160`.

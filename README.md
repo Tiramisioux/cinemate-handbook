@@ -46,6 +46,7 @@ a future session of you with no memory of this one.
 | Understand CI, and add a new automated check | [`conventions/checks-and-ci.md`](conventions/checks-and-ci.md) |
 | Judge whether a claim needs hardware to settle | [`lessons/what-the-pi-taught-us.md`](lessons/what-the-pi-taught-us.md) |
 | Find the original finding behind a citation like `F-204` | [`lessons/review-archive.md`](lessons/review-archive.md) |
+| See what is known-broken and deliberately not fixed yet | [`open-threads.md`](open-threads.md) |
 
 ## The one rule that generated this handbook
 

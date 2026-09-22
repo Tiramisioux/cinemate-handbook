@@ -238,3 +238,31 @@ check yet.
   operator-facing surfaces and which of them owns state
 - [`../conventions/philosophy.md`](../conventions/philosophy.md) — "duplicated truth",
   "route, don't replicate", and where the codebase violates its own principles
+
+## A CineMate DNG is bit-packed big-endian, not MIPI CSI2P
+
+Reading pixels out of a recorded DNG by hand — to check an optical-black boundary, a crop, or
+whether a frame is corrupt — needs the right unpacking, and the obvious guess is wrong. The
+buffer the sensor delivers is MIPI CSI2P, but the DNG writer repacks it, so what lands in the
+file is plain big-endian bit packing:
+
+```
+12-bit, 2 px per 3 bytes:  v0 = (b0 << 4) | (b1 >> 4)
+                           v1 = ((b1 & 0x0F) << 8) | b2
+
+10-bit, 4 px per 5 bytes:  v0 = (b0 << 2) | (b1 >> 6)
+                           v1 = ((b1 & 0x3F) << 4) | (b2 >> 4)
+                           v2 = ((b2 & 0x0F) << 6) | (b3 >> 2)
+                           v3 = ((b3 & 0x03) << 8) | b4
+```
+
+Decoding with the CSI2P layout instead (low bits gathered in a trailing byte) produces
+plausible-looking noise rather than an obvious failure, which is the trap: on 2026-09-22 it
+produced two confident and wrong readings of where a frame's valid data ended before the error
+was caught.
+
+**Check the unpacking before trusting any measurement.** The cheap test is the optical-black
+region: it must come out flat at the file's own `BlackLevel` tag with a standard deviation of
+about 1–2. If it does not, the unpacking is wrong, not the sensor. `StripByteCounts / height`
+gives the stride; `stride * 8 / bits` must equal `ImageWidth`, which confirms the frame is
+packed at all.
