@@ -34,48 +34,88 @@ When one closes, delete it and — if hardware taught something durable — add 
 
 ## Sensor / driver
 
-### imx283 MODE_2 delivers 32 fewer columns than it advertises — deferred 2026-09-22
+### MODE_1C's centred origin (924) is untested on hardware — deferred 2026-09-26, corrected from 2026-09-22
 
-**What:** `IMX283_MODE_2` (the 2×2-binned full-frame readout, transport 2784×1828, 12-bit)
-declares 2784 columns. The sensor writes only 2752 of them. Columns 2752–2783 carry stale
-buffer content, so every take in that mode has a band of garbage down the right edge. The
-operator reported it as "some lines to the right".
+**What:** `IMX283_MODE_1C_WINDOW_LEFT` selects between two named candidates,
+`_HW_CONFIRMED` (236, currently active) and `_CENTRED` (924 = `imx283_active_area.left` (108)
++ (5472-3840)/2). Whether 924 streams cleanly has never been tried on a camera.
 
-**Evidence:** DNG taken 2026-09-22 on a CM5, imx283 driver `cinemate-modes`. Columns
-2752–2783 are **byte-identical on every row — standard deviation 0.0** — which is padding,
-not image. Columns 0–47 sit at the black level (optical black), 48–2751 are picture. So the
-mode yields 2704 picture columns where its own table says 2736. `IMX283_MODE_1C` (3936×2176,
-10-bit) has no such shortfall: 3840 picture columns, exactly as declared.
+**Evidence:** the 2026-09-22 finding below this one — that centring to 856 corrupts the frame
+— is **retracted as evidence against centring**, though the measurement itself stands. 856 =
+40 + (5472-3840)/2 is centred against `imx283_active_area.left = 40`, the value this same
+branch chain later corrected to 108 for being left/top-swapped (`development/imx283-active-
+size/ROUND2.md`, Defect 3a; see [`lessons/hardware-log.md`](lessons/hardware-log.md)'s
+2026-09-26 entries). 924 is the value that actually follows from the corrected origin, was
+derived and named this round (`imx283-v4l2-driver@812c058`), and remains untested — there was
+no Pi access in that session.
 
-**Why deferred:** the fix changes an advertised mode size, which moves CineMate's mode table
-and every index into it, and the cause is not established. Two candidates: the mode's own
-`.width = (5472 + 96)/2`, or this fork's `HTRIMMING_END = crop.left + crop.width + 1` — the
-`+1` that `EXPERIMENTAL_CROPS.md` has recorded as unresolved since WP-283-3 and that runs for
-**every** mode, not just this one.
+**Why deferred:** needs a camera and a scene with a recognisable centre, and the old wrong
+answer (856) cost a corrupted mode, so this is not a change to make unattended.
 
-**What would settle it:** one take per candidate width. If declaring 2752 makes the garbage
-band disappear with no loss of picture, the table was wrong; if the picture also shrinks, the
-window is being trimmed and `HTRIMMING_END` is the culprit.
+**What would settle it:** switch `IMX283_MODE_1C_WINDOW_LEFT` to `_CENTRED` and stream a
+scene with a known centre in MODE_1C. If it corrupts the same way 856 did, record that failure
+against 924 specifically — do not assume it inherits 856's result, they are centred against
+different origins. If it streams cleanly, promote it and retire 236 to the historical
+constant.
 
-### Is the imx283 UHD window actually centred on the sensor? — deferred 2026-09-22
+### `HTRIMMING_END` is written as `crop.left + crop.width + 1` — deferred, long-standing
 
-**What:** `IMX283_MODE_1C` reports `.crop.left = 236`. Centred on the active array would be
-856. It is not known whether the picture is genuinely off-centre or whether 236 is simply
-expressed relative to drive mode 0x30's own readout region.
+**What:** mainline's imx283 writes `HTRIMMING_END = crop.left + crop.width`. This fork has
+always written `+ 1`. Nobody has established which is right.
 
-**Evidence:** setting `.left = 856` corrupts the frame outright — the left portion becomes a
-grey ramp and the right two-thirds vertical colour noise — so `HTRIMMING_START` **is**
-honoured and 0x30 does address the array differently from the all-pixel modes, exactly as
-commit 95183c8 claimed without evidence. 236 is restored and hardware-confirmed. The other
-fourteen aspect-family crops are all verified centred, so this is specific to MODE_1C.
+**Evidence:** `EXPERIMENTAL_CROPS.md` records it as an open divergence from WP-283-3 onward,
+desk-checked and deliberately not changed.
 
-**Why deferred:** the experiment that would resolve it needs a scene with a recognisable
-centre in front of the camera, and the wrong answer costs a corrupted mode. The driver
-comment already records the failure mode so nobody repeats it on a live camera.
+**Why deferred:** the line runs for **every** mode, so a wrong guess moves the horizontal
+window on every readout at once rather than on one experimental crop. It needs the datasheet's
+exact start/end semantics (inclusive vs exclusive end) or a register read-back, not a
+plausible-looking edit.
 
-**What would settle it:** shoot one scene in full-frame Mode 0 and again in MODE_1C, and see
-whether the 4K frame is the middle of the wide one or sits left of it. If it sits left, the
-measured offset — not 236, not 856 — is the number to write.
+**What would settle it:** a chart take checked for a one-column miscentre or wrap, or the
+datasheet. This was previously listed as a live candidate for an imx283 MODE_2 column
+shortfall; that shortfall is now resolved and retracted (the actual cause was
+`imx283_active_area`'s `.left`/`.top` being swapped, not this `+1` — see
+[`lessons/hardware-log.md`](lessons/hardware-log.md)'s 2026-09-26 entry), so this question is
+independent of that one and still needs its own evidence.
+
+### Shading correction is preview-only; DNG lens-shading falloff is still uncorrected by design — deferred 2026-09-26
+
+**What:** the libcamera-side fix (`feature/imx283-shading-tuning`) gives the ISP a real
+`luminance_lut`, so the **preview** stops looking artificially flat-lit and starts showing
+genuine corner falloff. It does nothing for the DNG: `rpi.alsc`'s table only feeds the ISP's
+own processing path, and CineMate's raw DNG is the sensor's Bayer data captured before that
+path runs.
+
+**Evidence:** `src/ipa/rpi/controller/rpi/alsc.cpp` applies `luminanceLut` inside the IPA
+pipeline; the DNG writer (`cinepi_raw.cpp`'s IFD builder) packs the sensor's raw frame
+directly and never calls into libcamera's ISP processing.
+
+**Why deferred:** correcting DNG-side shading needs a per-pixel gain map baked into (or shipped
+alongside) the raw pipeline — a different mechanism from an IPA tuning file — and was out of
+scope for this round.
+
+**What would settle it:** decide whether DNG-side shading correction belongs in cinepi-raw
+(bake a gain map into the unpack/pack step) or stays a post-process step done in the edit, and
+update this entry once decided.
+
+### 30 single-row imx283 mode classes remain unmeasured against Round 2's checks — deferred 2026-09-26
+
+**What:** `check_mode_table.py` and `ratio_audit.py` were run against the aspect-ratio mode
+families (`IMX283_ASPECT_MODE`/`IMX283_ASPECT_MODE_1C`) this round touched. Thirty single-row
+mode classes elsewhere in the driver's mode table were not in that sweep and have not been
+checked against either tool.
+
+**Evidence:** `development/imx283-active-size/ROUND2.md`'s scope was explicitly the
+aspect-ratio families; the single-row classes are separate table entries the audit scripts
+were never pointed at this round.
+
+**Why deferred:** no hardware access this session, and thirty rows is a sweep of its own
+rather than something to fold into this round's close-out.
+
+**What would settle it:** point `check_mode_table.py` and `ratio_audit.py` at the remaining
+single-row classes and record the result here. Likely a quick pass — the tools now discover
+their own rects (see [`working/repository-and-tooling-traps.md`](working/repository-and-tooling-traps.md)) —
+but say so once actually run, not before.
 
 ### imx585 does not report its active-picture origin — deferred 2026-09-22
 

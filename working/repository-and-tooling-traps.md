@@ -211,6 +211,46 @@ pass vacuously, and a check whose own extraction regex is the thing that broke. 
 [`../conventions/checks-and-ci.md`](../conventions/checks-and-ci.md), because they apply to
 anything under `tools/` as much as to anything under `_test/`.
 
+## 5. A checker that reports "n/a" is reporting NOT CHECKED
+
+`development/imx283-active-size/check_mode_table.py` (a companion tool for the imx283
+active-size campaign, not yet promoted into `tools/`) hard-coded exactly two rect names as
+resolvable — `imx283_active_area` and `imx283_native_area`. Every other file-scope
+`v4l2_rect` in the driver fell through the resolver unrecognised, including all thirteen
+`IMX283_ASPECT_MODE_1C()` rows, and printed `n/a` for every condition on those rows instead of
+`pass` or `fail`. `n/a` sits in the same column as `pass`/`fail`, so a summary line built from
+that table read as clean: "7 of 8 conditions pass with zero failures" was true of only 66 of
+the table's 79 entries, and the other 13 had simply never been evaluated. The same resolver
+had a second, quieter version of the identical bug: a struct-literal field that named a plain
+`#define` rather than a literal or a function-like macro was treated as unresolvable rather
+than substituted, and reported `n/a` for the same reason.
+
+Fixed by having the checker discover every file-scope `static const struct v4l2_rect` (and
+every plain `#define`) from the file's own text, instead of naming a fixed list of them up
+front.
+
+**The general lesson:** the same shape as `## 4` above — `n/a` is not evidence of anything.
+Whenever a table has three possible outcomes, check which one dominates before trusting a
+"zero failures" summary; a checker that can silently downgrade part of its own input to "not
+checked" will make exactly that part invisible in the number a person actually reads.
+
+## 6. A CI job's own hard-coded test list drifts from the build it stands in for
+
+`cinepi-raw`'s `.github/workflows/checks.yml` cannot run `meson test` on its GitHub runner —
+`meson.build` requires the real `libcamera` dependency and there is no `subprojects/*.wrap` to
+satisfy it on a plain `ubuntu-latest` box — so the workflow instead compiles and runs each
+`cinepi/meson.build` `test()` target directly with `g++`, one hand-written `build_and_run
+<name>` line per target. That line list lives in a different file from `meson.build`'s own
+list, and nothing keeps the two in step: it drifted to 13 `build_and_run` lines against an
+18-target `meson.build` (fixed in `ccb1fe0`, "Run every cinepi unit test in CI, not thirteen of
+eighteen") — five tests had landed with no matching CI line, so they compiled and passed on a
+developer's machine and were never run in CI at all, while the workflow kept reporting green.
+
+**What would catch it structurally:** count `test(` in `cinepi/meson.build` and
+`build_and_run` in `checks.yml` and fail the job when they differ — the same shape as the
+guards in `## 4` above, but nothing enforces it yet. Until it exists, cross-check the two
+lists by hand whenever a test is added or removed from either side.
+
 ## The common shape
 
 Each of these is something that reported success while doing the wrong thing, or reported
@@ -220,6 +260,9 @@ nothing at all:
 - The restart console animated convincingly while connected to nothing.
 - The rotary retry logged diligently and destroyed the log.
 - Four of the five guards above exist because the failure they catch is invisible.
+- `check_mode_table.py` printed `n/a` for 13 of 79 entries, and the summary still read "zero
+  failures."
+- `checks.yml`'s hand-written test list drifted to 13 of 18 targets while staying green.
 
 The recurring defence is the project's own standard: **a check beats a comment, because a
 comment cannot fail.** Where a trap here is still only documented — the LFS attribute
@@ -266,3 +309,21 @@ region: it must come out flat at the file's own `BlackLevel` tag with a standard
 about 1–2. If it does not, the unpacking is wrong, not the sensor. `StripByteCounts / height`
 gives the stride; `stride * 8 / bits` must equal `ImageWidth`, which confirms the frame is
 packed at all.
+
+### 2026-09-26 addendum: the same wrong unpacking produced a fake Bayer-phase bug
+
+Read with the CSI2P layout by mistake, a 10-bit CineMate DNG's optical-black region measured
+median 227, sd 333 — nowhere near flat. Read with the correct plain big-endian layout above (4
+px per 5 bytes), the same region measured median 50.00, sd 5.18, matching the file's own
+tagged `BlackLevel`. The wrong reading did not just fail the flatness check quietly: it also
+produced a fake `G1/G2` ratio of 1.56, which looks exactly like a genuine Bayer-phase flip
+(real phase errors show up as G1 and G2 disagreeing) and sent an earlier pass of this
+investigation chasing a phase bug that did not exist. Correctly unpacked, the same sensor's
+G1/G2 measured 0.9993, 0.984 and 1.007 across three separate reads — flat, as a correct
+debayer should be.
+
+The lesson above is not hypothetical: a wrong unpacker does not fail loudly, it produces a
+plausible, specific-looking, *wrong* number, and that number can look exactly like an
+unrelated bug in a different part of the pipeline. Run the optical-black flatness check before
+trusting anything derived from an unpacker, including a diagnostic as basic as "is the colour
+phase correct."

@@ -3535,3 +3535,126 @@ in that frame's own pixels — exactly what DNG's `ActiveArea` wants.
 **Confirmed by:** operator ("there is black to the left"), the per-column measurements above,
 and a fresh UHD DNG after the fix carrying `ActiveArea 0 96 2160 3936`, `DefaultCropOrigin 96
 0`, `DefaultCropSize 3840 2160`.
+
+## 2026-09-26 — the imx283 tuning override shadowed libcamera's own calibrated file, and froze AWB into a fixed purple gain
+
+**Tested:** a 12-bit 2x2 imx283 frame (`CINEPI_26-09-26_165312_F10`) measured pixel by pixel,
+cross-checked against three earlier clips from three different days.
+
+**Did not work:** the rendered image reads magenta or warm depending on the scene, which had
+looked like an intermittent bug. It is not intermittent and it is not scene-dependent:
+`AsShotNeutral` was **identical to four decimal places in every one of the four clips** — R
+0.7692, a red gain of exactly 1.3000 — while blue only drifted within measurement noise (1/2.8,
+1/2.7, 1/2.7, 1/2.6). A fixed, wrong gain rendered against different scenes is what produces a
+cast that looks like it changes with the shot.
+
+**Why:** `cinemate-install.sh`'s `install_sensor_tuning_overrides()` installed
+`resources/tuning_files/imx283.json` over both the working tree's and the runtime's copy of
+libcamera's own calibrated imx283 tuning. That file was **byte-identical to libcamera's
+`uncalibrated.json` except for one field** (`black_level` 3200 vs 4096): five algorithms
+instead of fourteen, one placeholder colour-correction matrix instead of nineteen measured
+ones, and an `rpi.awb` block running `bayes: 0` with **no `ct_curve` at all** — the table AWB
+needs to track colour temperature. Raw Bayer means for the measured frame, normalised to
+green, were R 0.915 / G 1.000 / B 0.758; `AsShotNeutral` asked the renderer for R 0.7692 / B
+0.3704 (gains of 1.30x red, 2.70x blue) — nothing like the scene's own colour, which is the
+signature of an AWB with nothing to converge against, producing a constant wrong answer
+instead. `G1/G2` measured 0.9993 on this frame, which rules out a Bayer-phase explanation for
+the cast — a real phase error would show up as G1 and G2 disagreeing, and they don't.
+
+The override was introduced 2026-05-14 in `56fe7dc5` ("Improve compile-raw rebuilds and sensor
+install defaults"), which created `install_sensor_tuning_overrides()` with `imx283.json` in
+its list, and reinforced 2026-06-28 in `fa20a71a`. Before that commit the Pi used libcamera's
+own calibrated imx283 tuning.
+
+**The general lesson:** never install a tuning override for a sensor libcamera already ships a
+calibrated tuning for. `imx585`/`imx585_mono` legitimately keep their overrides — no stock
+tuning exists for either — and are unaffected; only `imx283.json` was ever wrong to override.
+
+**Confirmed by:** the diff between the installed stub and libcamera's `uncalibrated.json`
+(byte-identical but for `black_level`), `cinemate-install.sh`'s override list and its own
+updated comment, and the `AsShotNeutral`/raw-mean measurements above across four clips. Fixed
+in `cinemate@e0e83c91` ("Stop overriding imx283 tuning with the uncalibrated stub (Defect A)");
+see `development/imx283-active-size/ROUND2.md`, Defect A.
+
+## 2026-09-26 — the "calibrated" imx283 tuning had no lens-shading table either, a separate defect from the AWB freeze above
+
+**Tested:** the 47254-byte imx283.json this fork was actually pinned to underneath the
+override above — read directly, not just diffed against the stub.
+
+**Did not work:** even this file's `rpi.alsc` block carries only solver parameters
+(`omega`/`n_iter`/`luminance_strength`) and no `luminance_lut` table at all.
+`src/ipa/rpi/controller/rpi/alsc.cpp` resizes `luminanceLut` to a flat 1.0 and logs "no
+luminance table - assume unity everywhere" whenever the table is missing, so the ISP applied
+**no** lens-shading correction on the preview (or anywhere else in that pipeline), independent
+of the AWB defect above.
+
+**Why:** upstream libcamera added real per-sensor luminance tables in `d8a9e0e06` and
+refreshed them in `c724189a7` (PiSP tuning format, 1024-cell table, gains 1.001–1.667), well
+after this fork's pinned imx283.json was captured. Worth remembering for the *next* falloff
+report: the adaptive AWB/ALSC solver still equalises **colour** shading even with a unity
+luminance table, so an uncorrected sensor presents as evenly-lit-looking, **grey** corners, not
+obviously tinted ones — this bug reads as "no vignetting," not as a visible defect, which is
+why it sat undiagnosed under the AWB freeze above.
+
+Pulling in the real file surfaced a second, smaller trap: the upstream file has a trailing
+comma in `rpi.awb`'s "cloudy" entry that libcamera's own JSON parser tolerates but CineMate's
+does not — it reads the same path with Python's strict `json` module to derive the log-encode
+support matrix, so the comma raised `JSONDecodeError` and `tuning_files.py`'s validator
+silently treated "not JSON" as a bad override and fell back, caught only by
+`test_log_encode_support_matrix_is_derived_from_tuning_black_levels` going from 8 to 9
+failures. Fixed by dropping the trailing comma (`libcamera@16a01d9f`). One parser being
+lenient does not mean every reader of the same file is.
+
+**Confirmed by:** reading `rpi.alsc` in both the installed stub and the 47254-byte file (both
+missing a table), `alsc.cpp`'s resize call and its log line, and the upstream commits that add
+the table this fork never had. Fixed by pulling libcamera's `c724189a7` imx283.json into this
+fork (`cinemate@4fe8edec`, `libcamera@feature/imx283-shading-tuning`); see
+`development/imx283-active-size/ROUND2.md`.
+
+## 2026-09-26 — "black edges" was three unrelated defects sharing one name, and two 2026-09-22 findings built on the confusion are retracted
+
+**Tested:** the operator's report ("the black bands are gone from the DNGs but still in the
+preview, the image is purple in both preview and DNG") against the 2026-09-22 DNG-side fix and
+the preview path, checked separately.
+
+**Did not work:** three distinct things had all been reported as "black edges" and folded
+together, which is why chasing "the" black-edge bug had gone in circles across sessions:
+
+1. **DNG right-hand band.** `imx283_active_area` had `.left` and `.top` swapped, so a
+   full-width window programmed `HTRIMMING_START` as 40 instead of 108 and the transport
+   padded the shortfall with garbage on the right. Fixed at the source — the active-area
+   struct — not by clamping a delivered width.
+2. **Preview black strips.** Mostly the lens-shading gap in the entry above (uncorrected
+   falloff reads as dark corners/edges), plus a genuine optical-black sliver sitting inside the
+   ISP's default crop.
+3. **Web-preview strips.** The web page sized `#preview-frame` from the lores size CineMate
+   had *requested* (`V.aspect`), while libcamera's `validate()` can align the actual ISP output
+   to a different size (e.g. a 1080x720 request delivered as 1088x720). HDMI never showed this
+   because `DrmPreview` letterboxes the mismatch against a black canvas whose edge the operator
+   never sees; the browser draws a visible border around the frame, so the same letterbox reads
+   there as a black strip. Fixed by measuring the live `<img>`'s `naturalWidth`/
+   `naturalHeight` instead of predicting the size from what was requested (`cinemate@4fe8edec`).
+
+**Two 2026-09-22 findings retracted by this session, both downstream of (1):**
+
+- *"The 2x2 readout caps at 2704 delivered columns"* — **no**, there is no cap. The 32
+  "missing" columns were the right-hand garbage band from the swapped origin above; after the
+  origin fix a full-width 12-bit 2x2 frame carries picture to its last column. Keeping the old
+  clamp would have cropped 32 columns of real picture out of every full-width 2x2 DNG going
+  forward.
+- *"`crop_width`/`binning` is measurably wrong on imx283"* — **no**, that claim rested on the
+  same 2704 measurement and is exact once the origin is fixed. The driver's `Mode Active
+  Width` control is still worth having — it also covers vertical optical black and the
+  imx585's split padding — just not for this reason.
+- *"`IMX283_MODE_1C .left = 236` is hardware-confirmed as non-centrable"* — **narrowed, not
+  retracted**: the A/B that produced a grey ramp tested 856, which is centred against the
+  active area's old, swapped `.left = 40`. The correctly-centred value against the fixed origin
+  is 924 (`108 + (5472-3840)/2`) and has never been streamed. See
+  [`../open-threads.md`](../open-threads.md).
+
+If a later session corrects this one, add a new entry rather than editing this record — the
+same rule this file has kept since 2026-09-22.
+
+**Confirmed by:** `imx283-v4l2-driver@4761af3` ("remove the 2704 correction — the shortfall
+was the swapped origin"), the operator's DNG-clean/preview-dirty report, and
+`development/imx283-active-size/ROUND2.md` in full.
