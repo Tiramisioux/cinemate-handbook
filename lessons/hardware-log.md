@@ -3658,3 +3658,96 @@ same rule this file has kept since 2026-09-22.
 **Confirmed by:** `imx283-v4l2-driver@4761af3` ("remove the 2704 correction — the shortfall
 was the swapped origin"), the operator's DNG-clean/preview-dirty report, and
 `development/imx283-active-size/ROUND2.md` in full.
+
+## 2026-09-27 — the imx283's `ct_curve` is CineMate's manual white-balance table; swapping tuning files silently re-tunes every preset
+
+**Tested:** three different imx283 tuning files, each producing a magenta-looking rendering,
+measured pixel by pixel rather than judged by eye.
+
+**Did not work:** "we don't need AWB, it's all manual" does not make the AWB block inert.
+CineMate never runs AWB — every white-balance preset is a fixed Kelvin value the operator
+picks — but `cinepi_controller.initialize_wb_cg_rb_array()` reads `rpi.awb.ct_curve` out of
+whichever tuning file is installed, interpolates `r`/`b` at each preset's colour temperature,
+and stores `(round(1/r, 1), round(1/b, 1))` as that preset's `cg_rb`. A tuning file with a
+different `ct_curve` hands every preset a different pair of gains, with no code change and no
+warning. Three tuning files in a row looked identically magenta and were blamed on the wrong
+thing before this was found.
+
+**Why:** measured raw Bayer means, normalised to green: R/G 1.257, B/G 1.209 — both high, by
+roughly the same factor. That is the diagnostic that broke the stall: a colour-temperature
+error moves R and B in **opposite** directions, because both are being pulled toward the same
+wrong point on the same curve — one warms as the other cools. R and B both high together is
+not a curve-position error, it is a gain error, which is what pointed at `cg_rb` rather than
+at `ct_curve`'s shape. Sweeping `cg_rb` and re-measuring converged at `1.42, 1.32` → R/G
+1.020, B/G 1.002, confirmed by eye against a neutral subject.
+
+**The general lesson:** a "manual only" control can still be fed by a calibration file
+underneath it. Before ruling AWB machinery out of a colour investigation because the mode is
+manual, check whether the manual mode's own numbers are *derived from* that machinery rather
+than independent of it.
+
+**Confirmed by:** the R/G, B/G measurements above before and after the `cg_rb` sweep, and eye
+confirmation on the final frame. See [`../open-threads.md`](../open-threads.md) for the
+two-point `ct_curve` calibration this leaves open.
+
+## 2026-09-27 — imx283 MODE_1C read out 638 of 2176 lines, and the noise measurement that hid it
+
+**Tested:** MODE_1C (10-bit UHD, drive mode 0x30) streamed and decoded frame by frame,
+cross-checked against the mode's own `veff` register value.
+
+**Did not work:** the frame was reported as noise and *measured* as noise — neighbour
+correlation 0.021 across the full frame — which read as a genuine capture defect. It wasn't,
+on the lines that actually held picture: MODE_1C carried `veff = 3694`, Mode 0's value, never
+set to its own. `imx283_start_streaming()` cuts `v_widcut = (veff - y_out_size) / 2 =
+(3694 - 2160) / 2 = 767` per side off a readout that scans only 2176 lines, leaving
+`2176 - 2*767 = 642` — measured 638 of 2176. The correlation statistic was computed across the
+whole frame and swamped by the 71% that was unwritten buffer, not sensor output: a frame that
+is mostly garbage measures as noise regardless of what the real 638 lines look like. Setting
+`veff = 2176` fixed it, verified on hardware.
+
+**Why the method is the actual lesson:** decoding one preview frame and *looking* at it — not
+computing a statistic across it — showed the top third was a perfect image and the rest
+wasn't. That named the defect in one look; the whole-frame correlation number had actively
+hidden it by averaging a clean third against two garbage thirds and reporting the average as
+"noisy," which is a plausible-looking wrong answer, not an absence of one.
+
+**Cost paid chasing the wrong lever:** MODE_1C's `.left` was moved 236 → 924 and `.top` 852 →
+784 while investigating, on the theory that a mis-centred window explained the noise. Both
+were reverted; neither was the cause — `veff` was. A field-for-field diff of the mode entry
+against the last known-good branch would have shown the `veff` discrepancy in one command, and
+was only run after three rebuild-and-reboot cycles had already gone into the `.left`/`.top`
+theory. **924 has since been re-tested on its own and streams cleanly** — it had previously
+been condemned by a test that could not tell it apart from 236, because the broken `veff`
+corrupted both centrings equally. This closes the "MODE_1C's centred origin (924) is
+untested" entry that lived in [`../open-threads.md`](../open-threads.md); `.top`'s question
+is narrower and still open there.
+
+**Confirmed by:** the frame decode and correlation measurement above, the `veff` register
+read, and a clean frame after setting `veff = 2176`.
+
+## 2026-09-27 — the imx283 lens-shading table added 2026-09-26 was removed again; its attribution to the operator's dark-edges complaint was never established
+
+**Tested:** the shading table's own gain range, and both candidate "what the operator had
+before" files, against the size of the falloff it was introduced to fix.
+
+**Did not work:** the table (libcamera's `c724189a7` `imx283.json`, pulled into this fork the
+day before) was removed again at the operator's request. Its `rpi.alsc.luminance_lut` gains
+cap at 1.667 — at most a 40% lift, at the single most extreme corner cell — which falls well
+short of the falloff that had been blamed on it. Worse, the attribution had no baseline to be
+measured against: neither libcamera's own pre-fix `imx283.json` (`f080f4b96`) nor the
+4343-byte stub `cinemate-install.sh` actually shipped on this fork contains a shading table at
+all. "Adding the missing table" could only ever move the correction from nothing to something
+small; it could not have been the fix for a complaint the operator had while running a file
+that had no table either.
+
+**Why this is a correction rather than a new finding:** the 2026-09-26 entry above's own
+claim — this fork's imx283 tuning had no lens-shading table, `alsc.cpp` assumes unity gain in
+its absence — still stands and was correctly reasoned. What is retracted is only the inference
+drawn from it afterward: that the missing table explained the operator's dark-edge report. It
+didn't, or at least was never shown to. The open-threads.md entry that deferred DNG-side
+shading correction on the strength of that inference has been removed along with it, since
+the preview-side fix it was extending no longer exists.
+
+**Confirmed by:** operator, 2026-09-27 (removal request); the gain-range reading of the pulled
+`c724189a7` file; byte inspection of both `f080f4b96` and the installed stub, neither
+containing `rpi.alsc.luminance_lut`.

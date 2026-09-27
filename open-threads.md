@@ -34,29 +34,65 @@ When one closes, delete it and — if hardware taught something durable — add 
 
 ## Sensor / driver
 
-### MODE_1C's centred origin (924) is untested on hardware — deferred 2026-09-26, corrected from 2026-09-22
+### MODE_1C's `.top` is still 852, where this round's checker expects 784 — deferred 2026-09-27
 
-**What:** `IMX283_MODE_1C_WINDOW_LEFT` selects between two named candidates,
-`_HW_CONFIRMED` (236, currently active) and `_CENTRED` (924 = `imx283_active_area.left` (108)
-+ (5472-3840)/2). Whether 924 streams cleanly has never been tried on a camera.
+**What:** `.top` was set to 852 (centred against the active area) on 2026-09-22 and had no
+visible effect on the image, because `.top` is metadata rather than a live window for drive
+mode 0x30 (see that date's entry in [`lessons/hardware-log.md`](lessons/hardware-log.md)).
+This round's checker independently derives an expected value of 784 for the same field.
+`.top` was tried at 784 while chasing the `veff` short-frame bug below and reverted once
+`veff` turned out to be the actual cause — the revert settles nothing about which of 852/784
+is correct, only that neither was the noise bug.
 
-**Evidence:** the 2026-09-22 finding below this one — that centring to 856 corrupts the frame
-— is **retracted as evidence against centring**, though the measurement itself stands. 856 =
-40 + (5472-3840)/2 is centred against `imx283_active_area.left = 40`, the value this same
-branch chain later corrected to 108 for being left/top-swapped (`development/imx283-active-
-size/ROUND2.md`, Defect 3a; see [`lessons/hardware-log.md`](lessons/hardware-log.md)'s
-2026-09-26 entries). 924 is the value that actually follows from the corrected origin, was
-derived and named this round (`imx283-v4l2-driver@812c058`), and remains untested — there was
-no Pi access in that session.
+**Evidence:** the 2026-09-22 entry (852, no visible effect on drive mode 0x30); the
+2026-09-27 `veff` entry in [`lessons/hardware-log.md`](lessons/hardware-log.md) (784 tried and
+reverted alongside `.left`, neither implicated).
 
-**Why deferred:** needs a camera and a scene with a recognisable centre, and the old wrong
-answer (856) cost a corrupted mode, so this is not a change to make unattended.
+**Why deferred:** untested, not refuted — one build and one reboot would settle it, and
+neither happened this session.
 
-**What would settle it:** switch `IMX283_MODE_1C_WINDOW_LEFT` to `_CENTRED` and stream a
-scene with a known centre in MODE_1C. If it corrupts the same way 856 did, record that failure
-against 924 specifically — do not assume it inherits 856's result, they are centred against
-different origins. If it streams cleanly, promote it and retire 236 to the historical
-constant.
+**What would settle it:** set `.top = 784`, build, reboot once, and stream MODE_1C. If the
+picture is unchanged (consistent with `.top` being inert for this drive mode, per
+2026-09-22), record that and pick either value as the checker-agreeing default. If it is not
+inert, that itself corrects the 2026-09-22 finding and needs its own entry.
+
+### The imx283 `ct_curve` is a two-point calibration — deferred 2026-09-27
+
+**What:** `rpi.awb.ct_curve` — the table `cinepi_controller.initialize_wb_cg_rb_array()`
+interpolates every white-balance preset's gains from (see
+[`lessons/hardware-log.md`](lessons/hardware-log.md)'s 2026-09-27 entry) — has exactly two
+measured points: tungsten, confirmed by eye, and daylight, measured on one scene through one
+lens. Every preset between those two Kelvin values is an interpolation between two samples,
+not a measurement.
+
+**Evidence:** the gain sweep that fixed the magenta cast (`cg_rb = 1.42, 1.32`) was measured
+and confirmed at one colour temperature only; the curve's shape at any other preset has not
+been checked against a real subject.
+
+**Why deferred:** needs a grey card and time on the bench, not a code change.
+
+**What would settle it:** shoot a grey card across 2500–7000K through the same lens, measure
+`AsShotNeutral` at each step, and rebuild `ct_curve` from the real samples instead of the
+two-point interpolation.
+
+### Thirteen `IMX283_ASPECT_MODE_1C` rows are still marked `.experimental`, and the `veff` fix reopens the question — deferred 2026-09-27
+
+**What:** the thirteen `IMX283_ASPECT_MODE_1C()` rows
+[`working/repository-and-tooling-traps.md`](working/repository-and-tooling-traps.md)'s
+checker fix made newly resolvable were marked `.experimental` while MODE_1C's own `veff`
+carried the wrong value (see [`lessons/hardware-log.md`](lessons/hardware-log.md)'s
+2026-09-27 entry — MODE_1C read out 638 of 2176 lines). None have been retested since that
+fix landed.
+
+**Evidence:** the checker's `n/a`-resolver bug and the `veff` bug were found and fixed in the
+same round; neither has been re-run against these thirteen rows since.
+
+**Why deferred:** no further hardware time this session.
+
+**What would settle it:** rerun `check_mode_table.py`/`ratio_audit.py` against the thirteen
+rows now that both the checker's resolver and MODE_1C's `veff` are fixed, and stream each on
+hardware. Promote whichever pass; whatever stays `.experimental` should name the reason it's
+still there rather than carry the flag over by default.
 
 ### `HTRIMMING_END` is written as `crop.left + crop.width + 1` — deferred, long-standing
 
@@ -77,26 +113,6 @@ shortfall; that shortfall is now resolved and retracted (the actual cause was
 `imx283_active_area`'s `.left`/`.top` being swapped, not this `+1` — see
 [`lessons/hardware-log.md`](lessons/hardware-log.md)'s 2026-09-26 entry), so this question is
 independent of that one and still needs its own evidence.
-
-### Shading correction is preview-only; DNG lens-shading falloff is still uncorrected by design — deferred 2026-09-26
-
-**What:** the libcamera-side fix (`feature/imx283-shading-tuning`) gives the ISP a real
-`luminance_lut`, so the **preview** stops looking artificially flat-lit and starts showing
-genuine corner falloff. It does nothing for the DNG: `rpi.alsc`'s table only feeds the ISP's
-own processing path, and CineMate's raw DNG is the sensor's Bayer data captured before that
-path runs.
-
-**Evidence:** `src/ipa/rpi/controller/rpi/alsc.cpp` applies `luminanceLut` inside the IPA
-pipeline; the DNG writer (`cinepi_raw.cpp`'s IFD builder) packs the sensor's raw frame
-directly and never calls into libcamera's ISP processing.
-
-**Why deferred:** correcting DNG-side shading needs a per-pixel gain map baked into (or shipped
-alongside) the raw pipeline — a different mechanism from an IPA tuning file — and was out of
-scope for this round.
-
-**What would settle it:** decide whether DNG-side shading correction belongs in cinepi-raw
-(bake a gain map into the unpack/pack step) or stays a post-process step done in the edit, and
-update this entry once decided.
 
 ### 30 single-row imx283 mode classes remain unmeasured against Round 2's checks — deferred 2026-09-26
 
@@ -130,23 +146,6 @@ correct for its RAW16 families and there was no imx585 attached to verify a chan
 **What would settle it:** an imx585 on the bench. The driver side is a near-copy of the
 imx283's: report where the picture starts inside the transport frame, in that frame's own
 pixels. Delete the inference branch once it does.
-
-### `HTRIMMING_END` is written as `crop.left + crop.width + 1` — deferred, long-standing
-
-**What:** mainline's imx283 writes `HTRIMMING_END = crop.left + crop.width`. This fork has
-always written `+ 1`. Nobody has established which is right.
-
-**Evidence:** `EXPERIMENTAL_CROPS.md` records it as an open divergence from WP-283-3 onward,
-desk-checked and deliberately not changed.
-
-**Why deferred:** the line runs for **every** mode, so a wrong guess moves the horizontal
-window on every readout at once rather than on one experimental crop. It needs the datasheet's
-exact start/end semantics (inclusive vs exclusive end) or a register read-back, not a
-plausible-looking edit.
-
-**What would settle it:** a chart take checked for a one-column miscentre or wrap, or the
-datasheet. Note this is a live candidate for the MODE_2 column shortfall above — resolve the
-two together.
 
 ### DNG `ActiveArea` is verified on the UHD mode only — deferred 2026-09-22
 

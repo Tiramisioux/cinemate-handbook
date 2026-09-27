@@ -50,6 +50,26 @@ Installing a package into a live venv to unblock a test, or flipping a config fl
 to reach an otherwise-unreachable code path, changes the system under test — say so
 explicitly, and revert what should be reverted afterward.
 
+## A faster loop for one measurement: read the live stream, no recording
+
+Settling a single, narrow claim — one gain value, one crop boundary, one frame's worth of a
+statistic — does not need a take, a card, or a DNG transfer. cinepi-raw's MJPEG server is
+already running during a normal session: `curl http://127.0.0.1:8000/stream`, cut the first
+frame out between its `SOI`/`EOI` markers, decode it, and measure. That closes the loop
+against live hardware in the time a `curl` and a decode take, and it repeats as many times as
+a sweep needs — this is how the 2026-09-27 white-balance gain sweep
+([`../lessons/hardware-log.md`](../lessons/hardware-log.md)) converged on a value without a
+single recorded take.
+
+**The caveat that will cost you the sweep if you miss it: setting a Redis control is not
+enough.** `cinepi_controller` picks up a changed key only when something also runs
+`redis-cli publish cp_controls <key>` — write the value and skip the publish, and the running
+process never rereads it. The next measurement then silently repeats the *previous* state
+instead of the one you just set, which reads as the sweep having reached a plateau. It hasn't;
+the control hasn't moved. Publish after every set, and if a sweep looks like it has stopped
+responding, check that the last write actually reached the process before trusting the
+plateau.
+
 ## When a desk diagnosis turns out to need hardware correction
 
 This will happen — see
