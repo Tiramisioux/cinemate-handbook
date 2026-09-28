@@ -3751,3 +3751,84 @@ the preview-side fix it was extending no longer exists.
 **Confirmed by:** operator, 2026-09-27 (removal request); the gain-range reading of the pulled
 `c724189a7` file; byte inspection of both `f080f4b96` and the installed stub, neither
 containing `rpi.alsc.luminance_lut`.
+
+## 2026-09-27 — the live `config.txt` ruled out both reported mechanisms for "two active camera overlays", and showed the settings editor writing the wrong `camera_auto_detect`
+
+**Tested:** the operator's own `cinepi.local`, running imx283. Two read-only captures of
+`/boot/firmware/config.txt`, run by the operator (this session had no SSH credentials — key auth
+is refused, password only). First `grep -c "# ---- Camera section ----"`, then a whole-file scan
+for every `dtoverlay=` / `camera_auto_detect` line together with the managed-block and
+camera-section markers.
+
+Prompted by an operator report: switching drivers from imx477 to imx283 had left "both entries
+active in config.txt and imx283 set to cam 1".
+
+**Worked:** both captures came back cleanly and were decisive. The file is well-formed:
+
+```
+ 1:# >>> cinemate-install >>>
+13:# ---- Camera section ----
+15:camera_auto_detect=1
+16:dtoverlay=imx283,cam0
+18:# ---- End camera section ----
+67:# <<< cinemate-install <<<
+```
+
+**Did not work:** both desk-derived hypotheses died on the evidence, in order.
+
+1. *Duplicate camera-section markers.* A session had reproduced the exact reported shape — two
+   active overlays, one on cam1 — from a file with two `# ---- Camera section ----` /
+   `# ---- End camera section ----` pairs, since `_extract()` resolves the first via plain
+   `str.find()` and a save then rewrites only that pair. The live count is **1**. Ruled out.
+2. *A camera overlay outside the markers.* The stated fallback. The whole-file scan shows no
+   `dtoverlay=imx*` line anywhere outside the camera section. Ruled out, before any code was
+   written for it.
+
+**Why:** the reported state is historical and no longer reproducible — it had been corrected
+before the capture, and **issue 7's original trigger remains unknown.** What the capture did
+establish is a different, confirmed defect it happened to expose.
+
+The shape of the file names its author. A flat camera section with a single `camera_auto_detect`
+and no commented per-model templates is `boot_config._render_camera_section()`'s output; the
+installer's `configure_boot_config()` emits five commented triplets, one per sensor model. So the
+settings editor wrote this file. And the installer's `resolve_sensor_overlay()` is per-sensor
+where the editor was not:
+
+| `SENSOR_MODEL` | installer `camera_auto_detect` | installer overlay |
+|---|---|---|
+| imx477, imx296 | 1 | `<model>,<port>` |
+| imx283 | **0** | `imx283,<port>` |
+| imx585 | **0** | `imx585,<port>,ccmp` |
+| imx585_mono | **0** | `imx585,<port>,mono,ccmp` |
+
+`_render_camera_section()` hardcoded `auto_detect = "1" if lines else "0"` for every sensor, so
+line 15 above carries `1` on an imx283 where the installer writes `0`. `overlay_line_for()`
+never emitted `ccmp` at all. `cfgOverlayLine()` / `currentConfigText()` in
+`templates/settings_editor.html` had drifted the same two ways, so the raw-file drawer previewed
+a line the save would not write — while `overlay_line_for()`'s docstring still claimed parity
+with it.
+
+Two writers for one file, disagreeing, because the per-sensor knowledge lives only in the
+installer's bash `case` statement where the Python cannot read it. Fixed both sides and added
+`_test/test_boot_config_installer_parity.py`, which sources the real `cinemate-install.sh` and
+diffs its output against `boot_config.py`'s rendering per sensor.
+
+Worth recording separately, because it nearly caused a bad fix: `camera_auto_detect` is a
+GPU-firmware directive that merges an overlay into the in-memory device tree at boot if a probe
+matches an *official* sensor. It never writes a line into `config.txt` and does nothing to port
+assignment — so it cannot produce "both entries active … imx283 on cam1" either, and must not be
+offered as the explanation.
+
+One hazard the fix introduces, not yet exercised on hardware: `ccmp` is an `__overrides__` entry
+present on the imx585 driver's `cinemate-modes` (the installer's actual pin, `IMX585_DRIVER_REPO_REF`)
+and on `cinemate-7modes`, `cinemate`, `main` and `innomaker-v1.0` — but **absent on `6.12.y` and
+`port/clearhdr-upstream-fixes`**. An overlay line carrying `,ccmp` against either of those is an
+unknown parameter and the camera will not enumerate, the same trap `resources/sensors.json`
+already records for the imx283 `link-frequency` parameter. This stack does run drivers off-pin.
+
+**Confirmed by:** operator, two commands run on `cinepi.local` 2026-09-27, output pasted verbatim
+into the session. The installer/editor divergence and the `ccmp` branch availability are
+confirmed from source (`cinemate-install.sh`, `boot_config.py`, `imx585-overlay.dts` on the pinned
+ref); the firmware semantics of `camera_auto_detect` are general Raspberry Pi behaviour,
+corroborated by both driver repos' READMEs, and are **not** written down in this codebase. Full
+account in `development/todo-2026-09-27/CONFIG-TXT-FINDINGS.md`.

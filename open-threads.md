@@ -237,6 +237,76 @@ restart, and see whether the camera comes back in the mode the operator left it 
 does not, the saved value needs to be a mode *identity* (width/height/depth/hdr) rather than a
 position.
 
+### Only the aspect ratios a sensor can actually produce should be offered — deferred 2026-09-27
+
+**What:** `available_aspect_ratios()` in `sensor_detect.py` returns an entry for **every** ratio
+in the canonical table whenever the camera has any mode with a known aspect, because the
+`best_mode` search has no tolerance gate — only a nearest-match. Ratios with nothing within
+`ASPECT_RATIO_TOLERANCE` come back `exact: false` and the settings pane draws them dashed and
+italic rather than omitting them. The operator's request is that they not appear at all.
+
+**Evidence:** `available_aspect_ratios()`'s loop keeps a `best_mode` for each table entry and
+`continue`s only when the camera has no aspect-bearing mode whatsoever; `exact` is computed
+afterwards and never filters. Operator report 2026-09-27, "I should only see the aspect ratios
+offered by the sensor".
+
+**Why deferred:** a peer session was committing into this exact matcher while the batch ran —
+`75a3ab4b` ("Default a fresh camera to its full frame plus 1.78-or-closest") and `ce0ac5c1`
+("Keep a saved mode selection across a driver geometry change") landed mid-investigation. Two
+agents rewriting one matcher is how this stack loses work.
+
+**What would settle it:** decide whether "offered" means `exact` only, or `exact` plus the
+full-frame entry (which is deliberately `exact: true` while being off-table — see
+`full_frame_ratio()`), then gate the result. Check `_default_ratio_ids()`'s guarantee that no
+camera loses its whole table still holds afterwards, and that the pane's "zero available ratios"
+no-op path is reachable.
+
+### The resolution dropdown and the settings-editor mode table can disagree — deferred 2026-09-27
+
+**What:** the web GUI's dropdown is fed `get_available_resolutions()` (post-filter) while the
+settings editor's table is the unfiltered driver catalogue from
+`/settings-editor/api/sensor-modes`. Some divergence is by design — `enabled_modes`,
+aspect-ratio matching, `k_steps`, `bit_depths`, `min_mode_width` all narrow the dial
+deliberately — but the operator reports a mismatch they cannot account for, and at least one
+parser defect behind it was never confirmed fixed.
+
+**Evidence:** operator report 2026-09-27. `development/todo-2026-09-20/SENSOR-MODE-FINDINGS.md`
+Finding 3: a continuation line's own crop annotation (`(0, 0)/3840x2160 crop binning 1x1`)
+contains a `WxH`-shaped substring the parser reads as a second mode's resolution. Never fixed —
+that worker was stopped mid-correction. Finding 1 from the same document (16-bit ClearHDR modes
+dropped by the slice-and-reparse) **is** now fixed: `detect_camera_model()` passes
+`hdr=True, clear_hdr_section=True` and `_parse_cinepi_output` carries
+`line_hdr = current_hdr or current_bit_depth == 16`.
+
+**Why deferred:** same peer-session collision as the entry above.
+
+**What would settle it:** re-run the offline reproduction against the surviving captures in
+`development/todo-2026-09-20/captures/` — they are verified free of the SSH wrapper's echoed
+command line and need no camera — and diff parsed mode counts against
+`sensors-modes-api-response.json` taken at the same moment.
+
+### Per-sensor `config.txt` knowledge lives in bash where Python cannot read it — deferred 2026-09-27
+
+**What:** which `camera_auto_detect` value and which extra overlay parameters a sensor needs is
+written only in `cinemate-install.sh`'s `resolve_sensor_overlay()` `case` statement.
+`boot_config.py` and `templates/settings_editor.html` need the same facts and each carried their
+own copy, which had silently drifted both ways (see
+[`lessons/hardware-log.md`](lessons/hardware-log.md), 2026-09-27).
+
+**Evidence:** the drift itself, found by diffing the installer's output against
+`_render_camera_section()`'s: `auto_detect` hardcoded `1` for every sensor, `ccmp` never emitted.
+Both fixed, and `_test/test_boot_config_installer_parity.py` now gates the agreement — but by
+comparing two copies, not by removing the duplication.
+
+**Why deferred:** the durable home is `resources/sensors.json`, which both sides already read for
+link frequencies via `sensor_database.py`. Moving it there needs the installer to gain a
+`python3 -c` JSON-reading shim, which touches its own tests and its idempotency guarantees —
+larger than the branch that found this should carry.
+
+**What would settle it:** add `camera_auto_detect` and an overlay-parameter list to each sensor's
+`sensors.json` entry, read them from both sides, and keep the parity test as the ratchet while
+the bash side migrates.
+
 ## Pi / runtime
 
 ### DNG disk workers cannot set their nice level — deferred 2026-09-22

@@ -64,6 +64,32 @@ Seven checks, each aimed at a specific place this codebase has drifted before:
   (the ceiling itself, 12, hasn't been tightened down to match — see below), and the check
   exists to stop a thirteenth appearing unnoticed, not to fail until those are triaged.
 
+### An eighth guard of the same kind, living in pytest rather than `tools/`
+
+`_test/test_boot_config_installer_parity.py` (added 2026-09-27) is a contract-drift check in
+everything but location. It sources the real `cinemate-install.sh` — guarded sourcing, `sudo`
+shimmed with a passthrough on `PATH`, `CONFIG_TXT_PATH` redirected to a temp file, the same
+technique `scripts/make-release-image.sh` already uses — calls `configure_boot_config()`, and
+diffs its actual output against `boot_config.py`'s rendering per sensor.
+
+It is a pytest test and not a `tools/` script because it needs to *execute* the other side
+rather than read it. The seven above all work by reading files; this one is the first guard whose
+subject is a bash function's behaviour, and the pytest job already has the fixture machinery for
+driving a subprocess and comparing text.
+
+What it protects is worth stating, because it is the shape this codebase keeps rediscovering:
+which `camera_auto_detect` value and which extra overlay parameters a sensor needs
+(`ccmp` on imx585, `0` rather than `1` on every third-party sensor) lived only in the installer's
+bash `case` statement, while `boot_config.py` and `templates/settings_editor.html` each carried a
+hand-written copy. All three had drifted, in two independent ways, and the drift was invisible
+until someone diffed a live `/boot/firmware/config.txt` against what the installer would have
+written — see [`../lessons/hardware-log.md`](../lessons/hardware-log.md), 2026-09-27.
+
+The check compares two copies; it does not remove the duplication. That is deliberate and
+recorded in [`../open-threads.md`](../open-threads.md) — the durable fix is to move the per-sensor
+data into `resources/sensors.json`, which both sides already read for link frequencies, and keep
+this test as the ratchet while the bash side migrates.
+
 ## A ratchet is not a gate
 
 `--max-unresolved 0` and `--max-unreferenced 12` look similar but mean different things. A
