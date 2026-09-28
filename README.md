@@ -34,6 +34,7 @@ a future session of you with no memory of this one.
 | Touch the browser side of either web page | [`working/browser-side-traps.md`](working/browser-side-traps.md), then [`working/changing-the-gui.md`](working/changing-the-gui.md) |
 | Change the installer or a systemd service | [`working/changing-the-installer.md`](working/changing-the-installer.md) |
 | Detect or report what is attached to the I²C bus | [`working/probing-i2c-peripherals.md`](working/probing-i2c-peripherals.md) |
+| Add, remove or reorder a mode in a sensor driver's table | [`working/changing-the-sensor-mode-table.md`](working/changing-the-sensor-mode-table.md) |
 | Commit an image, stream the log, or write a text-scraping guard | [`working/repository-and-tooling-traps.md`](working/repository-and-tooling-traps.md) |
 | Run or add tests, understand what needs a Pi | [`working/testing.md`](working/testing.md) |
 | Run a deterministic hardware verification session | [`working/hardware-session.md`](working/hardware-session.md) |

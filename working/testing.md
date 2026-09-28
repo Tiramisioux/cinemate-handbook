@@ -82,7 +82,56 @@ categories from reading the code alone, stop and write down the specific experim
 would confirm or refute it instead — see
 [`hardware-session.md`](hardware-session.md) for how to actually run one.
 
+## What looks like it needs a Pi and does not: the mode table
+
+"A mode is missing from the settings pane" reads like a hardware question. It almost never is,
+and treating it as one has cost whole sessions. A captured `--list-cameras` listing is enough
+to localise the loss **exactly**, because the two stages that can drop a mode are both pure
+functions you can call on a desktop:
+
+```python
+sys.path.insert(0, 'src')
+from module.sensor_detect import SensorDetect, CLEAR_HDR_MARKER_RE
+from module.sensor_database import load_sensor_database
+from module.config_loader import load_settings
+
+sd = SensorDetect(load_settings('settings.jsonc'))   # __init__ probes; that failure is harmless
+sd.sensor_database = load_sensor_database('resources/sensors.json')
+
+base = sd._parse_cinepi_output(plain_txt, hdr=False)
+m    = CLEAR_HDR_MARKER_RE.search(hdr_txt)
+hdrm = sd._parse_cinepi_output(hdr_txt[m.end():], hdr=True, clear_hdr_section=True)
+merged = sd._merge_mode_lists(base, hdrm)
+out    = sd._finalize_modes(merged)                  # dict[camera][index] -> mode
+```
+
+Count `(bit_depth, hdr)` pairs after the parse, then again after `_finalize_modes`. Whichever
+stage loses the rows is the guilty one, and you know it in minutes rather than after a Pi
+session. Use the **real** `settings.jsonc` via `load_settings`, not a hand-built dict — the
+filters are the other half of the suspect list, and a synthetic settings dict exonerates them
+by accident.
+
+This found a live defect: 16-bit Clear HDR modes were invisible in the settings pane for weeks
+while `--list-cameras` printed all of them. The parse dropped every RAW16 line it met while it
+believed it was in the SDR state, and the post-marker section was being parsed with
+`hdr=False` and re-tagged afterwards, so nothing 16-bit ever reached the re-tag. Fixed by
+`0e6899e7`; the replay is a committed test now
+(`_test/test_clearhdr_16bit_real_pi_capture_replay.py`), running against real captures in
+`development/todo-2026-09-20/captures/`.
+
+**Keep the captures.** A `--list-cameras` pair costs one SSH round trip and makes every later
+question about that driver build answerable offline. Two things about them are worth knowing
+before you read one: `cinepi-raw` prints the `CLEAR HDR / SENSOR HDR` section on **every**
+run, with or without `--hdr sensor` — so the two probes are byte-identical and the marker
+split, not the flag, is what separates the states. And 16-bit prints as `'SRGGB16'` with no
+`_CSI2P` suffix, unlike `'SRGGB12_CSI2P'`.
+
+The driver-side half of the same question — whether the mode table itself is well-formed — is
+also answerable at a desk; see
+[`changing-the-sensor-mode-table.md`](changing-the-sensor-mode-table.md).
+
 ## Further reading
 
 - `system-review/deliverables/SKILL-PAYLOAD.md` §7 — the verification section this page distills.
+- [`changing-the-sensor-mode-table.md`](changing-the-sensor-mode-table.md) — the driver-side mode-table rules and their desk checkers.
 - [`../conventions/checks-and-ci.md`](../conventions/checks-and-ci.md) — what's automated and where it runs.

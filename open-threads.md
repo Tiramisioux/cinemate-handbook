@@ -34,6 +34,52 @@ When one closes, delete it and — if hardware taught something durable — add 
 
 ## Sensor / driver
 
+### WP-585-10 is the default branch's tip and has never been compiled — deferred 2026-09-27
+
+**What:** `cinemate-modes` tip `18c1eb2` adds the 1920- and 2048-wide sensor-window crop
+families — 19 new 16-bit Clear HDR entries, plus the SDR and 10-bit families, 96 entries in
+`supported_modes[]` where the base branch had 43. It was pushed to `cinemate-modes`, which on
+the same day became both the repo's default branch and what `cinemate-install.sh` pins
+(`IMX585_DRIVER_REPO_REF`). **No build has ever run against it**, on any host, and no take has
+been recorded in any new mode. A fresh clone or a fresh install gets it.
+
+**Evidence:** G2 and G3 pass in software — `tools/replay_mode_table_audit.py` and
+`tools/check_window_alignment.py` in the driver repo, run against the pushed tip, report 96
+entries and the one pre-existing warning below. G1 (DKMS build) and G4 (hardware) are UNRUN and
+were reported as such; the orchestrating host is macOS with no kernel tree, and
+`pi@cinepi.local` refused ssh (`publickey,password`). Write-up:
+`development/imx585-window-crops-1920-2048/RESULTS.md`.
+
+**Why deferred:** the operator asked for the push knowing both gates were open, twice told.
+Desk verification went as far as it can go without a compiler.
+
+**What would settle it:** `free -g`, then `git pull && sudo ./setup.sh` in
+`/home/pi/imx585-v4l2-driver`, then `cinepi-raw --list-cameras`. Expect 19 new 16-bit rows (10
+at the 1920 window, 9 at 2048). A build failure is the *good* outcome — the three
+`static_assert`s exist to catch a mis-ordered table at compile time. Then one take at
+1920x1080 1x1 and one at 2048x1080 1x1, checking the DNGs for Bayer-phase shift and a
+leading optical-black band. `cinemate-7modes` is untouched at `bd57617` if it has to be
+reverted.
+
+### Two entries advertise 3840x2072, so one of them is unreachable — deferred 2026-09-27
+
+**What:** in `supported_modes[]`, index 5 (SDR 1.85:1, window 3840x2072) and index 67 (RAW16
+1.89:1, window 3840x2032, which advertises `2032 + 40` = 2072) both advertise **3840x2072**.
+`v4l2_find_nearest_size()` takes the first, so the second can never be selected — it appears
+in `--list-cameras` and is dead. This is the WP-585-5 / WP-585-8 failure mode.
+
+**Evidence:** `tools/replay_mode_table_audit.py` reports it as its only warning. It is
+**pre-existing**, not introduced by WP-585-10 — confirmed by running the same replay against
+`git show experimental-cropped-modes-v2:imx585.c`, which reports 43 entries and the same single
+warning. Two collisions that WP-585-10 *did* introduce (1920x1080 and 2048x856, both RAW16)
+were found the same way and removed before the push.
+
+**Why deferred:** it belongs to WP-585-6, which is merged, and fixing it means deciding which
+of the two ratios loses its entry — a framing decision, not a mechanical one.
+
+**What would settle it:** decide whether 1.85:1 SDR or 1.89:1 RAW16 keeps 3840x2072, drop the
+other, and re-run the audit to zero. Neither is reachable today, so no capture regresses.
+
 ### MODE_1C's `.top` is still 852, where this round's checker expects 784 — deferred 2026-09-27
 
 **What:** `.top` was set to 852 (centred against the active area) on 2026-09-22 and had no
@@ -168,6 +214,31 @@ the tags off a frame — three commands. Note the right-edge column shortfall ab
 be inside `ActiveArea` until that separate defect is fixed.
 
 ## CineMate
+
+### Nobody has confirmed the 16-bit Clear HDR fix reached the camera — deferred 2026-09-27
+
+**What:** 16-bit Clear HDR modes were absent from the settings pane; the cause was a
+parse-time drop, fixed on `dev` by `0e6899e7` (2026-09-25). Whether the camera is *running*
+that commit was never established, so the original symptom may still be live on the unit.
+
+**Evidence:** the fix is verified against the operator's own capture. Replaying
+`development/todo-2026-09-20/captures/{plain,hdr}-probe-extracted.txt` through current `dev`
+with the shipped `settings.jsonc` yields 4 sixteen-bit rows (3840x2200@21, 1920x1120@57,
+1280x760@83, 1920x1100@30) where the live API at capture time returned 31 rows,
+`available.bit_depths: [10,12]`, and no 16-bit mode at all. `_available_mode_categories()`
+derives that from `sensor_modes_unfiltered`, so even the unfiltered table had none — which
+rules out every filter-side explanation. `pi@cinepi.local` refused ssh from two sessions, so
+the deployed commit was never read.
+
+**Why deferred:** needs Pi access, and the fix being two days old at the time makes "the unit
+is simply behind `dev`" the most likely answer — a deploy, not a code change.
+
+**What would settle it:** on the camera, `git -C /home/pi/cinemate log --oneline | grep -c
+0e6899e7`. If 0, deploy `dev` and re-check the settings pane. If 1 and 16-bit is still missing,
+there is a second gate nobody has found — read the live `settings.jsonc` first, since a
+non-empty `aspect_ratios`, a narrowed `k_steps` or an `enabled_modes` entry for imx585 would
+each hide the same rows *after* the parse and look identical to the operator. Then use the
+offline replay in [`working/testing.md`](working/testing.md) to localise it.
 
 ### The HDMI preview outline is off by one pixel — deferred 2026-09-22
 
