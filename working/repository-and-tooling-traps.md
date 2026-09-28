@@ -327,3 +327,42 @@ plausible, specific-looking, *wrong* number, and that number can look exactly li
 unrelated bug in a different part of the pipeline. Run the optical-black flatness check before
 trusting anything derived from an unpacker, including a diagnostic as basic as "is the colour
 phase correct."
+
+## The imx283 driver fork's branch layout, after the 2026-09-27 cleanup
+
+The fork was carrying 31 remote branches, most of them superseded attempts from one
+campaign. It now carries five, and the recovery path is tags rather than branches.
+
+| branch | what it is |
+|---|---|
+| `cinemate-modes` | **the default branch**, and the one the installer and the Pi track |
+| `6.12.y` | the mainline-derived base |
+| `master`, `link-speeds`, `imx283-uhd-4k-60p` | older, kept deliberately |
+
+`cinemate-dev` was the default until 2026-09-27. It held **zero** commits that
+`cinemate-modes` did not, so it was archived and deleted and the default moved.
+
+**Nothing was deleted without being archived first.** Every removed branch exists as
+`archive/<branch-name>` on the remote, pushed and verified present *before* the delete, so
+any of them comes back with:
+
+```
+git checkout archive/experimental-driver-active-crop
+```
+
+That ordering is the whole discipline: create the tag, push it, confirm it on the remote
+with `git ls-remote --tags`, and only then delete. A tag that only exists locally is not a
+backup.
+
+### The trap in `6.12.y`
+
+`6.12.y` still carries `imx283_active_area` with `.top` and `.left` **swapped**
+(`.top = 108, .left = 40`). That single transposition is what the entire Round 2 campaign
+traced back to: it put `HTRIMMING_START` 68 columns left of the active area, the readout ran
+off the right-hand end, and the transport padded the difference — which then got
+misdiagnosed as a "2704-column readout cap" and nearly became a permanent 32-column crop of
+real picture.
+
+The corrected value is `.top = 40, .left = 108`, which is the only orientation that fits the
+5592x3710 native array — `left = 40, top = 108` puts the bottom edge at 3756 in a 3710-row
+array. If you ever branch from `6.12.y`, fix that first.

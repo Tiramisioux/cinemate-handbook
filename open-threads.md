@@ -169,31 +169,6 @@ be inside `ActiveArea` until that separate defect is fixed.
 
 ## CineMate
 
-### Eight tests fail on `dev`, all in the imx585 ClearHDR area — deferred 2026-09-22
-
-**What:** `python3 -m pytest _test/ -q -p no:randomly` on `dev` reports 8 failures. They are
-pre-existing and unrelated to the crop-mode work; two others in the same area were fixed
-2026-09-22 when the phantom-ClearHDR defect was repaired.
-
-**Evidence:** the same 8 fail at `3e416c64`, before that repair, byte-for-byte. Verified by
-checking out that commit in a worktree and re-running. They are:
-`test_cinepi_controller_startup_sensor_mode::test_valid_mode_is_kept_unchanged`,
-`test_clearhdr_probe_state::test_hdr_only_probe_marks_every_mode_hdr`,
-`test_resolution_defaults::test_clearhdr_16bit_driver_binning_is_preserved`,
-`test_sensor_database::test_imx585_clearhdr_modes_merged_and_ordered`,
-`test_sensor_mode_geometry::test_geometry_on_continuation_line_is_attached_to_previous_mode`,
-and three in `test_sensor_modes_endpoint`.
-
-**Why deferred:** each needs deciding whether the test encodes a contract the code has
-legitimately moved past, or a real regression. `test_hdr_only_probe_marks_every_mode_hdr`
-asserts `_parse_cinepi_output(..., hdr=True)` marks every mode HDR, which the parser no
-longer does — that one is likely a stale test. The `test_sensor_modes_endpoint` trio fail
-with `KeyError: 'imx585'`, which is a different shape and may be a real fault in the
-endpoint.
-
-**What would settle it:** one pass per test, asking only "is the assertion still the contract
-we want?". Do not fix them as a batch — they are not one defect.
-
 ### The HDMI preview outline is off by one pixel — deferred 2026-09-22
 
 **What:** the white guide rectangle the HDMI GUI draws around the live preview does not
@@ -232,10 +207,19 @@ filtered one — which is exactly how a stale index would present.
 because the aspect-ratio work made the filter operator-controllable, which raises the odds
 considerably.
 
-**What would settle it:** flip an aspect toggle that removes a mode earlier in the ordering,
-restart, and see whether the camera comes back in the mode the operator left it in. If it
-does not, the saved value needs to be a mode *identity* (width/height/depth/hdr) rather than a
-position.
+**Largely addressed, 2026-09-27 — kept open only for the hardware check.** The mechanism this
+entry asked for now exists. `_remember_sensor_mode()` (`cinepi_controller.py`) writes a
+per-sensor `SENSOR_MODE_MEMORY` entry carrying both the index and a *signature* of the mode
+(width/height/depth/hdr), and `_get_stored_sensor_mode_for_current_sensor()` prefers the saved
+index **only while its signature still matches**, resolving by stored geometry otherwise —
+i.e. the saved value is now a mode identity with a position as a fast path, which is exactly
+what the line below asks for. Landed in `3a6606ce` and `ce0ac5c1`. Read by desk inspection
+while fixing a stale test that asserted the valid-mode path writes nothing at all; it writes
+the memory key, which is the point.
+
+**What would settle it:** the experiment is unchanged and still unrun — flip an aspect toggle
+that removes a mode earlier in the ordering, restart, and see whether the camera comes back in
+the mode the operator left it in. Delete this entry when it does.
 
 ### Only the aspect ratios a sensor can actually produce should be offered — deferred 2026-09-27
 
@@ -326,6 +310,37 @@ value needs `RLIMIT_NICE` or `CAP_SYS_NICE`. The established pattern in this sta
 `limits.d` drop-in the audio path already uses (`@audio - rtprio 80`, see
 [`working/changing-the-installer.md`](working/changing-the-installer.md)) — never `setcap`.
 Confirm it matters first by timing a take with and without the priority applied.
+
+### The Pi's libcamera checkout carries work that exists nowhere else — deferred 2026-09-27
+
+**What:** `/home/pi/libcamera` has tracked modifications that are not on any branch, in any
+repo, on any other machine. A sync worker stopped rather than fast-forward over them, which
+was the right call and is how they were found at all.
+
+**Evidence** (reported by the sync worker on 2026-09-27; the Pi went off the network before
+this could be re-verified first-hand, so treat the line counts as reported, not measured):
+
+| path | state |
+|---|---|
+| `src/ipa/rpi/controller/controller.cpp` | genuine uncommitted edit — a live 580 MHz overclock |
+| `src/ipa/rpi/pisp/data/imx585.json` | ~1008-line uncommitted rewrite |
+| `src/ipa/rpi/pisp/data/imx283.json` | working tree matches the trunk; only the *index* holds a stale staged blob |
+| `src/ipa/rpi/vc4/data/imx283.json` | staged content already matches the trunk |
+
+**Why it matters more than it looks:** the imx283 tuning landed this round is safe — the
+working tree already matches `tiramisioux/cinemate`. The other two are not. The overclock in
+`controller.cpp` is presumably what makes the current link rates work, and losing it would
+change behaviour in a way nobody would connect back to a `git checkout`. Neither file is
+backed up anywhere.
+
+**Why deferred:** committing somebody's live tuning work without knowing what it is, or why
+it was never committed, is not a decision a sync pass gets to make.
+
+**What would settle it:** on the Pi, `git -C /home/pi/libcamera diff` each file and decide
+per file — commit to a branch on the fork, or discard deliberately. Until then the Pi is the
+only copy, and `git checkout`/`git pull` there can destroy it silently. Note the stale index
+entry on `pisp/data/imx283.json` separately: `git checkout-index` or a plain `git add` of the
+already-correct working-tree file clears it without touching content.
 
 ## Tooling
 
