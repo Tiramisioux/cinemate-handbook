@@ -58,6 +58,11 @@ The offset cuts both ways, and the result is counterintuitive: at a 1920-wide wi
 +40 shifts the RAW16 entries clear of the sizes the pre-existing 3840-wide 2x2-binned family
 already owns, while the SDR entries land straight on them.
 
+The 96-entry table this page describes built and ran on hardware, operator-confirmed
+2026-09-28. Treat the `static_assert` arrangement and the collision rule as settled. The fps
+figures below are still **arithmetic**, not measurements — see the warning at the end of that
+section.
+
 ## Frame rate comes from the window's HEIGHT, never its width
 
 ```

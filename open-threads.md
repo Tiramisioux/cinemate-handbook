@@ -34,33 +34,6 @@ When one closes, delete it and — if hardware taught something durable — add 
 
 ## Sensor / driver
 
-### WP-585-10 is the default branch's tip and has never been compiled — deferred 2026-09-27
-
-**What:** `cinemate-modes` tip `18c1eb2` adds the 1920- and 2048-wide sensor-window crop
-families — 19 new 16-bit Clear HDR entries, plus the SDR and 10-bit families, 96 entries in
-`supported_modes[]` where the base branch had 43. It was pushed to `cinemate-modes`, which on
-the same day became both the repo's default branch and what `cinemate-install.sh` pins
-(`IMX585_DRIVER_REPO_REF`). **No build has ever run against it**, on any host, and no take has
-been recorded in any new mode. A fresh clone or a fresh install gets it.
-
-**Evidence:** G2 and G3 pass in software — `tools/replay_mode_table_audit.py` and
-`tools/check_window_alignment.py` in the driver repo, run against the pushed tip, report 96
-entries and the one pre-existing warning below. G1 (DKMS build) and G4 (hardware) are UNRUN and
-were reported as such; the orchestrating host is macOS with no kernel tree, and
-`pi@cinepi.local` refused ssh (`publickey,password`). Write-up:
-`development/imx585-window-crops-1920-2048/RESULTS.md`.
-
-**Why deferred:** the operator asked for the push knowing both gates were open, twice told.
-Desk verification went as far as it can go without a compiler.
-
-**What would settle it:** `free -g`, then `git pull && sudo ./setup.sh` in
-`/home/pi/imx585-v4l2-driver`, then `cinepi-raw --list-cameras`. Expect 19 new 16-bit rows (10
-at the 1920 window, 9 at 2048). A build failure is the *good* outcome — the three
-`static_assert`s exist to catch a mis-ordered table at compile time. Then one take at
-1920x1080 1x1 and one at 2048x1080 1x1, checking the DNGs for Bayer-phase shift and a
-leading optical-black band. `cinemate-7modes` is untouched at `bd57617` if it has to be
-reverted.
-
 ### Two entries advertise 3840x2072, so one of them is unreachable — deferred 2026-09-27
 
 **What:** in `supported_modes[]`, index 5 (SDR 1.85:1, window 3840x2072) and index 67 (RAW16
