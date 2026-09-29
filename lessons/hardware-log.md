@@ -3853,3 +3853,22 @@ change and not the mode.
 **Confirmed by:** operator ("it works now") after the move to `cam1`, 2026-09-29; the timeouts are
 in `journalctl -b -u cinemate-autostart` and the manual cinepi-raw run. Docs page:
 `cinemate/docs/raspberry-pi-models.md`.
+
+## 2026-09-29 — imx283 black band on a CM4: the cinepi-raw binary was never rebuilt after the pull
+
+**Tested:** imx283 on a CM4 Rev 1.1 (`6.12.96+rpt-rpi-v8`, VC4), after the cam1 fix above. The
+optical-black band showed down the left of the preview.
+**Worked:** the driver was current and correct: `/dev/v4l-subdev0` reported `mode_active_left 32`,
+`mode_active_top 0`, active 1824x1216, binning 3 (DKMS module built 2026-09-29 from a source
+with the `Mode Active` controls). After rebuilding and installing cinepi-raw, the band was gone.
+**Did not work:** `/usr/local/bin/cinepi-raw` was dated 2026-09-21 23:29 while `~/cinepi-raw` was
+at `7aac94d` (2026-09-26), and `strings` found no `Preview OB compensation` in it. The source had
+been pulled; the binary had not been rebuilt. It also predated `9d7daa7` (DNG `ActiveArea` from the
+driver), so DNGs recorded on that binary carry the band too.
+**Why:** `git pull` on the Pi does not rebuild cinepi-raw. The tell is the log: a current binary
+prints `Preview OB compensation: ScalerCrop …` after `Sensor binning … (source: driver)` whenever
+the driver reports an active origin. No such line on any start = no crop code in the binary. The
+crop path has no VC4/PiSP branch; nothing about this was Pi 4 specific.
+**Confirmed by:** operator ("it works! no black edges"), 2026-09-29, after `meson compile` +
+`meson install`. Check for next time: `strings $(which cinepi-raw) | grep -c "Preview OB compensation"`
+against `git -C ~/cinepi-raw log -1 --format=%ci`.
