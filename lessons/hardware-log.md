@@ -3832,3 +3832,24 @@ confirmed from source (`cinemate-install.sh`, `boot_config.py`, `imx585-overlay.
 ref); the firmware semantics of `camera_auto_detect` are general Raspberry Pi behaviour,
 corroborated by both driver repos' READMEs, and are **not** written down in this codebase. Full
 account in `development/todo-2026-09-27/CONFIG-TXT-FINDINGS.md`.
+
+## 2026-09-29 — imx283 "black preview" on a CM4: no frames on cam0, frames on cam1
+
+**Tested:** imx283 (OneInchEye) on a Compute Module 4 Rev 1.1 (kernel `6.12.96+rpt-rpi-v8`,
+`bcm2835_unicam_legacy`, VC4 pipeline), `dtoverlay=imx283,cam0`, cinemate `f257b1ad` / cinepi-raw
+`7aac94d`, driver `cinemate-modes` `cb925e5`. Ran cinepi-raw by hand on the full frame
+(`--mode 5568:3664:12:U`).
+**Worked:** the driver bound, I2C registers were written, modes negotiated end to end (sensor,
+unicam, ISP). After moving the ribbon to `cam1` and using `dtoverlay=imx283`, the preview came up.
+**Did not work:** on `cam0`, cinepi-raw logged `Camera frontend has timed out` on every mode
+tried (the requested 1652x1220 and the full frame), and restarted in a loop. `rpicam-hello` was
+useless as a test on this Pi (it exits on `Invalid HDR option provided`, so its `frames displayed
+0` proved nothing). `fps_actual` in Redis (17.82) was a stale value and misled the first reading.
+**Why:** the data link carried no frames while the control link worked. The mechanism is **not
+isolated**: the CM4 IO board's `cam0` is 2-lane and `cam1` is 4-lane, and the operator's notes also
+name the `J6` camera jumpers. Which of the two, or both, mattered was not separated. The
+`cam0` overlay parameter was a leftover from a CM5 install. It was not the preview-active-crop
+change and not the mode.
+**Confirmed by:** operator ("it works now") after the move to `cam1`, 2026-09-29; the timeouts are
+in `journalctl -b -u cinemate-autostart` and the manual cinepi-raw run. Docs page:
+`cinemate/docs/raspberry-pi-models.md`.
