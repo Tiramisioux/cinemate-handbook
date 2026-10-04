@@ -3880,3 +3880,11 @@ against `git -C ~/cinepi-raw log -1 --format=%ci`.
 **Did not work:** Calibration never sweeps, on MF **and** on AF: about 100 ms of `moving=1, calibrating=2`, then the board stores a focus range of **0–0**. The focus position is always 0. "+" relative moves run the motor for about 98 ms each, but the reported distance stays at 0.28 m (it moved once, 0.28 → 0.32). "−" moves are refused outright (0–2 ms): the board believes it is already at position 0. An f/16 iris command did not engage.
 **Why:** Not established. The earlier desk guess — "AF/MF left on MF after the self-test" — is **disproved**: the AF run behaves identically. This lens never reports a focus position to the board, so the board's step-counting calibration finds nothing, and its own "below 0" guard then blocks one direction. A reversed drive direction for this Sigma would explain every row, but nobody has seen it yet. This is a Pinefeat firmware / third-party-lens compatibility question. On the CineMate side, a lens entry now records per-lens capabilities (PLAN D20: iris yes, focus no for this lens).
 **Confirmed by:** operator, live session 2026-10-04 (observed physical focus/iris movement and the full-range self-test); calibration and step logs in this session.
+
+## 2026-10-04 — follow-up: the Sigma 18-35's focus motor ignores the board's focus commands
+
+**Tested:** Same rig as the previous entry. 15 × `focus_relative=+3000` through `/dev/v4l-subdev1`, one per second, with the operator watching the lens.
+**Worked:** Nothing new. The board accepted every command and reported about 98 ms of motor time each.
+**Did not work:** The operator saw **no focus movement at all**, and the reported distance stayed at 0.28 m. Earlier in the session the operator had said focus moved for a ±3000 pair, which this entry supersedes: that was the only time the distance changed (0.28 → 0.32), and the movement could not be reproduced.
+**Why:** Still not established. On this lens the focus motor does not respond to the board's focus commands, yet it does run during the lens's own AF/MF ×3 self-test. This is a firmware/compatibility question for Pinefeat. The CineMate outcome is iris only for this lens (PLAN D20).
+**Confirmed by:** operator, live session 2026-10-04.
