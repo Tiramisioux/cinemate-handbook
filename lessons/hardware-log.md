@@ -3888,3 +3888,11 @@ against `git -C ~/cinepi-raw log -1 --format=%ci`.
 **Did not work:** The operator saw **no focus movement at all**, and the reported distance stayed at 0.28 m. Earlier in the session the operator had said focus moved for a ±3000 pair, which this entry supersedes: that was the only time the distance changed (0.28 → 0.32), and the movement could not be reproduced.
 **Why:** Still not established. On this lens the focus motor does not respond to the board's focus commands, yet it does run during the lens's own AF/MF ×3 self-test. This is a firmware/compatibility question for Pinefeat. The CineMate outcome is iris only for this lens (PLAN D20).
 **Confirmed by:** operator, live session 2026-10-04.
+
+## 2026-10-06 — CineMate branch on the CM4: lens control works end to end, the Sigma 18-35 is the limit
+
+**Tested:** `feature/pinefeat-cef168` (acce7ded) on the CM4 dev unit, imx477 on cam0, Sigma 18-35 f/1.8 DC HSM Art (board lens ID 112). Saved the lens in the settings editor (aperture range 1.8–16), `set iris` from the CLI, Calibrate from the pane, the AF/MF ×3 gesture, and a scripted iris sequence (f/1.8 ↔ f/16 held 6 s each, five `iris_relative=-100` steps) watched by the operator.
+**Worked:** Adapter found on startup (v4l2-subdev, cam0, i2c-0). Lens saved and re-saved as "Sigma 18-35 1:1.8 DC" with its range. `set iris` reached the board for every value (3.2, 16, 14, 13, 1.8, 6.3). The self-test gesture was **detected** ("Self-test seen" in the log at 21:36:21). Calibration ran, failed as predicted ("lens never reported a focus position"), and marked the lens focus-unavailable and autofocus-unavailable, so no calibration is started by the gesture for this lens.
+**Did not work:** The iris moves only slightly across the whole f/1.8–f/16 range, in absolute and relative steps. The board's status shows ~19–56 ms of motor time for every command regardless of size (32–47 ms for values from f/2 to f/22), so it cannot tell the real travel.
+**Why:** Not established. The operator's conclusion is that the Sigma is the limit: it accepts the commands but follows only a small part of them, as its focus motor ignores focus commands. The CineMate side sends the exact values. A Canon-made lens would show whether the adapter itself behaves.
+**Confirmed by:** operator, live session 2026-10-06 (visual observation of the iris; "it's the Sigma").
