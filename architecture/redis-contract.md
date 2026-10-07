@@ -65,6 +65,17 @@ proves absence of *references*, never absence of *behaviour*. Before deleting a 
 because nothing in the source reads it, check what's actually resident in a running Redis
 instance.
 
+## Lens keys (Pinefeat adapter) — cinemate only, plus a paused autofocus family
+
+`iris`, `lens_control`, `lens_detected`, `lens_provenance`, `lens_port`, `lens_id`, `lens_key`,
+`lens_name`, `lens_state`, `lens_message`, `lens_aperture_range` and `focus_position` are
+written by the `LensController` thread and read by the GUIs and by `cinepi_multi.py` at
+launch; cinepi-raw never sees them. `iris` is the *commanded* value, because the lens cannot
+report its own. `af_mode`, `af_trigger`, `lens_position` (cinemate → cinepi-raw) and `af_state`,
+`lens_position_actual` (back) exist in the enum for the paused autofocus work; the cinepi-raw
+handlers are on the unmerged branch `feature/pinefeat-af`. Do not seed `af_mode`. See
+[`../working/the-lens-adapter.md`](../working/the-lens-adapter.md).
+
 ## Access patterns on the cinemate side
 
 There are at least four distinct ways cinemate code touches Redis, which is one of the

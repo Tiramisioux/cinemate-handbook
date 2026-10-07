@@ -14,7 +14,7 @@ components in a fixed, load-bearing order — later components take earlier ones
 constructor arguments. In rough sequence: load `settings.jsonc` → splash → detect the Pi
 model → start the hotspot → build the six lowest-level components (`RedisController` first,
 then `SensorDetect`, `SSDMonitor`, `USBMonitor`, `GPIOOutput`, `DmesgMonitor`) → seed Redis
-defaults → start `ssd_monitor` → launch the `cinepi-raw` child → build `CinePiController` →
+defaults → start `ssd_monitor` → start the lens controller (so the launch sees the adapter) → launch the `cinepi-raw` child → build `CinePiController` →
 `StoragePreroll` → GPIO → `CommandExecutor` (the CLI/serial/HTTP dispatcher) → the serial
 relay → the status broadcaster → analog controls → mount the controller → `RedisListener`
 (the read side) → `BatteryMonitor` → `SimpleGUI` → the optional I²C OLED and quad rotary →

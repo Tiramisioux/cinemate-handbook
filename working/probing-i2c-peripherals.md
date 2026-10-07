@@ -121,6 +121,10 @@ fenced `config.txt` block deliberately does not manage, so the probe reports the
 `/dev/rtc`'s existence as two separate facts. A Pi 5 with an onboard clock and no DS3231 on the
 bus is the normal case, not a fault, and the pane says so.
 
+## The lens adapter is on the camera bus, not bus 1
+
+The Pinefeat CEF168 answers at `0x0d` on the **camera's** I²C bus — bus 0 on a CM4, 6 or 4 on a Pi 5, carrier-dependent on a CM5 — so the `I2C_BUS = 1` scoping above does not apply to it. Its row in the pane asks the running `LensController` first (no bus traffic, source `controller`) and only otherwise makes one read-only attempt through `cef168.open_adapter()`, refusing any backend that resolves to bus 1. A bare ACK is not enough here: the kernel driver never touches the board when it probes, so the subdev exists even with nothing connected. Presence means a CRC-checked 15-byte read. See [`the-lens-adapter.md`](the-lens-adapter.md).
+
 ## Probing is read-only; acting is a different contract
 
 The same pane can also *set* the RTC, and that path deliberately does not reuse the `set rtc

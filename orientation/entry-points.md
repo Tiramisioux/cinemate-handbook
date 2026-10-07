@@ -18,6 +18,7 @@ Six drift checks exist and run in CI — see
 | A Python dependency | `requirements.txt` (portable) or `requirements-hardware.txt` (needs a Pi) | Nothing — the installer reads both | the `pytest` CI job, if the import is portable |
 | A CLI command | `cli_commands.py`'s command table | `docs/cli-commands.md` and/or `docs/cli-user-guide.md` | **nothing** |
 | A systemd service | `services/<name>/` with a `.service` file and a Makefile | `services/Makefile`'s service list, the installer's service step, `docs/system-services.md` | **nothing** |
+| A lens control or lens-database field | `src/module/lens/` (`controller.py`, `database.py`) and a `CinePiController` method | the five places above, the Lens pane text `resources/gui-text/12-lens-lens-pinefeat.md`, `docs/pinefeat/` | `tools/gui_text_check.py`, `_test/test_lens_*.py`; **nothing** for the real board — see [`../working/the-lens-adapter.md`](../working/the-lens-adapter.md) |
 | A sensor | `resources/sensors.json` | `settings.jsonc`'s `arrays.*.steps` if new modes should be exposed; `docs/sensors.md`; a driver step in the installer if it needs an out-of-tree module | **nothing** |
 
 See [`../working/changing-a-control.md`](../working/changing-a-control.md) for a walked-through
