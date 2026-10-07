@@ -3896,3 +3896,11 @@ against `git -C ~/cinepi-raw log -1 --format=%ci`.
 **Did not work:** The iris moves only slightly across the whole f/1.8–f/16 range, in absolute and relative steps. The board's status shows ~19–56 ms of motor time for every command regardless of size (32–47 ms for values from f/2 to f/22), so it cannot tell the real travel.
 **Why:** Not established. The operator's conclusion is that the Sigma is the limit: it accepts the commands but follows only a small part of them, as its focus motor ignores focus commands. The CineMate side sends the exact values. A Canon-made lens would show whether the adapter itself behaves.
 **Confirmed by:** operator, live session 2026-10-06 (visual observation of the iris; "it's the Sigma").
+
+## 2026-10-07 — the Sigma 18-35's focus failure is not libcamera: same result with no camera process
+
+**Tested:** `dev` 814d811 on the CM4 dev unit. Stopped `cinemate-autostart` and confirmed no `cinepi-raw` was running, so nothing else held the lens subdev. Then ran Pinefeat's `calibrate -v` and made 3 × `focus_relative=+3000` and 3 × `-3000` moves directly on `/dev/v4l-subdev1`. Restarted CineMate afterwards.
+**Worked:** CineMate on `dev` came back with the adapter found, lens 112 selected as "Sigma 18-35 1:1.8 DC" (iris only), and cinepi-raw launched with the vc4 `imx477.json` tuning.
+**Did not work:** Identical to the runs with CineMate up. Calibration again lasted about 100 ms (this time `calibrating=1`, never 2, so *"No PWL points"*), the position stayed 0 and the range 0..0. Every move ran the motor for about 97 ms and the distance stayed 0.45–0.48 m. The "−" moves were not refused this time (about 97 ms, not 0–2 ms), but they changed nothing either.
+**Why:** libcamera and cinepi-raw are ruled out as the cause — the earlier idea that "cinepi-raw must start libcamera with autofocus enabled" does not hold. The board drives the motor and the lens does not follow. The operator reported the lens to Pinefeat and keeps using it with CineMate for iris.
+**Confirmed by:** operator, live session 2026-10-07 (reported to Pinefeat).
